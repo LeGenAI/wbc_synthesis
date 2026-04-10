@@ -267,6 +267,8 @@ def main() -> None:
     device = get_device()
     model = build_backbone(config["backbone"], num_classes=len(CLASSES))
     state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
+    if isinstance(state_dict, dict) and "model_state_dict" in state_dict:
+        state_dict = state_dict["model_state_dict"]
     model.load_state_dict(state_dict)
     model = model.to(device)
 

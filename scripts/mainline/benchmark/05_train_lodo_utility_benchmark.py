@@ -537,6 +537,9 @@ def run_single_seed(config: dict) -> dict:
     val_metrics = evaluate(model, val_loader, criterion, device)
     test_metrics = evaluate(model, test_loader, criterion, device)
 
+    best_model_path = run_root / "best_model.pt"
+    torch.save(best_state, best_model_path)
+
     confusion_matrix_path = run_root / "confusion_matrix.png"
     plot_confusion_matrix(confusion_matrix_path, test_metrics["confusion_matrix"])
 
@@ -557,6 +560,7 @@ def run_single_seed(config: dict) -> dict:
         },
         "synthetic_guard": leakage_stats,
         "artifacts": {
+            "best_model_pt": str(best_model_path.resolve()),
             "confusion_matrix_png": str(confusion_matrix_path.resolve()),
         },
     }

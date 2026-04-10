@@ -1,5 +1,6 @@
 # Scoring / quality gate config.
 # Set synthetic_manifest, classifier_ckpt, and real_manifest before running.
+# classifier_ckpt should point to a stage-05 best_model.pt artifact.
 synthetic_manifest: null
 classifier_ckpt: null
 real_manifest: null
