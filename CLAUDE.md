@@ -193,6 +193,18 @@ Priority held-out domains in the redesign documents:
 
 These are currently the most informative targets for hard-class rescue analysis.
 
+### Current baseline decision
+
+For the current mainline cycle, use `efficientnet_b0` as the canonical baseline backbone.
+
+Reason:
+
+- it is materially lighter on local Apple Silicon / MPS
+- it already completed a full-data mainline sanity run
+- the current cycle is about `generation policy`, not backbone ablation
+
+Interpret `vgg16` as a deferred follow-up axis for later robustness checks, not a required baseline in the current phase.
+
 ## Mainline Design Rules
 
 Agents working on new research code should preserve these constraints.

@@ -1,3 +1,5 @@
+# DEV CONFIG: low epochs/batch for quick iteration.
+# Use configs/mainline/benchmark/real_only_production.yaml for paper results.
 mode: real_only
 manifest_root: results/mainline/data
 heldout_domain: domain_b_raabin
@@ -15,4 +17,5 @@ full_finetune: false
 synthetic_manifest: null
 synthetic_sampling_weight: 1.0
 leakage_filter: true
-
+lr_step_size: 10
+lr_gamma: 0.5

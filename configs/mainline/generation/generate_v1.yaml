@@ -1,0 +1,17 @@
+# DEV CONFIG: minimal generation for pipeline testing.
+# Use generate_v1_production.yaml for paper-quality pool sizes.
+policy_dir: results/mainline/generation/policies/policy_v1_monocyte_raabin_amc
+heldout_domain: domain_b_raabin
+reference_manifest: null
+target_domains:
+  - domain_a_pbc
+  - domain_c_mll23
+  - domain_e_amc
+n_per_domain: 2
+n_seeds: 1
+seed: 42
+max_images: null
+output_image_root: data/generated_mainline
+output_root: results/mainline/generation/runs
+dry_run: false
+force: false

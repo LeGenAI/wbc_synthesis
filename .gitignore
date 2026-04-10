@@ -23,7 +23,7 @@ env/
 
 # ── Large binary / generated artifacts ────────────────────────────
 # Raw, processed, and generated image data (~17 GB)
-data/
+/data/
 
 # Model checkpoints (~1.9 GB)
 models/*.pt
@@ -38,8 +38,6 @@ logs/
 # ── Results (legacy experiment outputs, ~1.6 GB) ─────────────────
 # Bulk image galleries and JSON dumps from legacy phases
 results/legacy/
-
-# Keep: research docs (*.md), paper_submission/, and top-level results dir
 
 # ── Reference local copies (PDFs, ~51 MB) ────────────────────────
 references/

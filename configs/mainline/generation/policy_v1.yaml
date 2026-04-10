@@ -1,0 +1,23 @@
+policy_id: policy_v1_monocyte_raabin_amc
+inventory_manifest: results/mainline/data/inventory_manifest.json
+class_name: monocyte
+base_model: stabilityai/stable-diffusion-xl-base-1.0
+lora_dir: lora/weights/multidomain_monocyte
+source_domains:
+  - domain_a_pbc
+  - domain_c_mll23
+  - domain_e_amc
+target_domains:
+  - domain_b_raabin
+  - domain_e_amc
+prompt_style: target_domain
+negative_prompt: null
+strengths:
+  - 0.25
+  - 0.35
+guidance_scale: 6.0
+num_inference_steps: 25
+image_size: 512
+reference_images_per_domain: 16
+seed: 42
+output_root: results/mainline/generation/policies

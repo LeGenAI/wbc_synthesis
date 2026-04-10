@@ -90,3 +90,42 @@ def count_by_domain_class(items: list[dict]) -> dict[str, dict[str, int]]:
         counts.setdefault(domain, {})[class_name] = value
     return dict(counts)
 
+
+def merge_synthetic_manifests(paths: list[Path]) -> list[dict]:
+    """Merge multiple per-class synthetic manifests into one combined manifest."""
+    all_items: list[dict] = []
+    seen_ids: set[str] = set()
+    for path in paths:
+        items = load_manifest_items(path)
+        for item in items:
+            key = item.get("file_abs", item.get("file_rel", ""))
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+            all_items.append(item)
+    return all_items
+
+
+def validate_no_leakage(
+    items: list[dict],
+    heldout_domain: str,
+) -> list[str]:
+    """Return a list of warning strings if any items leak heldout domain info."""
+    warnings: list[str] = []
+    leaked = [item for item in items if item.get("domain") == heldout_domain]
+    if leaked:
+        warnings.append(
+            f"LEAKAGE: {len(leaked)} items have domain={heldout_domain} "
+            f"which is the heldout domain"
+        )
+    ref_leaked = [
+        item for item in items
+        if item.get("ref_domain") == heldout_domain
+    ]
+    if ref_leaked:
+        warnings.append(
+            f"LEAKAGE: {len(ref_leaked)} items were generated from "
+            f"reference images in heldout domain {heldout_domain}"
+        )
+    return warnings
+

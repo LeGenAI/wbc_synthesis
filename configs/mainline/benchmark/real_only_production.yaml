@@ -1,21 +1,21 @@
-# DEV CONFIG: low epochs/batch for quick iteration.
-# Use configs/mainline/benchmark/real_plus_synth_production.yaml for paper results.
-mode: real_plus_synth
+# PRODUCTION CONFIG: use for paper-quality results.
+# Run with --seeds 42 123 456 for mean+/-std reporting.
+mode: real_only
 manifest_root: results/mainline/data
 heldout_domain: domain_b_raabin
 backbone: efficientnet_b0
-batch_size: 16
-epochs: 3
-lr: 0.0003
+batch_size: 32
+epochs: 30
+lr: 0.0001
 weight_decay: 0.0001
 seed: 42
 train_fraction: 1.0
 output_root: results/mainline/benchmark
-num_workers: 0
+num_workers: 4
 image_size: 224
 full_finetune: false
 synthetic_manifest: null
-synthetic_sampling_weight: 0.5
+synthetic_sampling_weight: 1.0
 leakage_filter: true
 lr_step_size: 10
 lr_gamma: 0.5

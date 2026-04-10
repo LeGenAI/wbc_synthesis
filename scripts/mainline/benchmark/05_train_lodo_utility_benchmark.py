@@ -36,6 +36,7 @@ from scripts.mainline.common.manifests import load_manifest_items
 from scripts.mainline.common.reporting import markdown_table, write_json, write_text
 from scripts.mainline.common.runtime import (
     build_backbone,
+    build_lr_scheduler,
     ensure_dir,
     get_device,
     resolve_project_path,
@@ -75,6 +76,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--synthetic-manifest", type=str, default=None)
     parser.add_argument("--train-fraction", type=float, default=None)
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Run benchmark with multiple seeds for mean/std reporting.",
+    )
     return parser.parse_args()
 
 
@@ -102,6 +110,8 @@ def validate_config(config: dict) -> dict:
         "full_finetune": bool(config.get("full_finetune", False)),
         "synthetic_sampling_weight": float(config.get("synthetic_sampling_weight", 1.0)),
         "leakage_filter": bool(config.get("leakage_filter", True)),
+        "lr_step_size": int(config.get("lr_step_size", 10)),
+        "lr_gamma": float(config.get("lr_gamma", 0.5)),
     }
 
 
@@ -374,8 +384,8 @@ def build_run_name(config: dict) -> str:
     train_fraction_tag = str(config["train_fraction"]).replace(".", "p")
     domain_short = DOMAIN_SHORT[config["heldout_domain"]]
     parts = [
-        f"{config['mode']}"
-        f"__{config['backbone']}",
+        config["mode"],
+        config["backbone"],
         f"heldout_{domain_short}",
         f"tf{train_fraction_tag}",
         f"seed{config['seed']}",
@@ -433,21 +443,8 @@ def update_summary(heldout_root: Path) -> None:
     )
 
 
-def main() -> None:
-    args = parse_args()
-    config_path = resolve_project_path(PROJECT_ROOT, args.config)
-    config = load_yaml_config(config_path)
-    config = apply_overrides(
-        config,
-        {
-            "heldout_domain": args.heldout_domain,
-            "backbone": args.backbone,
-            "synthetic_manifest": args.synthetic_manifest,
-            "train_fraction": args.train_fraction,
-            "epochs": args.epochs,
-        },
-    )
-    config = validate_config(config)
+def run_single_seed(config: dict) -> dict:
+    """Run one full train/eval cycle for a single seed. Returns the report dict."""
     set_seed(config["seed"])
 
     manifest_root = resolve_project_path(PROJECT_ROOT, config["manifest_root"])
@@ -506,12 +503,18 @@ def main() -> None:
     criterion = nn.CrossEntropyLoss()
     trainable_params = [param for param in model.parameters() if param.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=config["lr"], weight_decay=config["weight_decay"])
+    scheduler = build_lr_scheduler(
+        optimizer,
+        step_size=config["lr_step_size"],
+        gamma=config["lr_gamma"],
+    )
 
     best_state = None
     best_val_macro_f1 = float("-inf")
     history = []
     for epoch in range(1, config["epochs"] + 1):
         train_loss = run_epoch(model, train_loader, optimizer, criterion, device)
+        scheduler.step()
         val_metrics = evaluate(model, val_loader, criterion, device)
         history.append(
             {
@@ -520,6 +523,7 @@ def main() -> None:
                 "val_accuracy": val_metrics["accuracy"],
                 "val_macro_f1": val_metrics["macro_f1"],
                 "val_loss": val_metrics["loss"],
+                "lr": round(float(scheduler.get_last_lr()[0]), 6),
             }
         )
         if val_metrics["macro_f1"] > best_val_macro_f1:
@@ -562,6 +566,94 @@ def main() -> None:
     dump_yaml_config(run_root / "resolved_config.yaml", config)
     update_summary(heldout_root)
     print(f"Wrote benchmark outputs to: {run_root}")
+    return report
+
+
+def aggregate_multi_seed(reports: list[dict], output_path: Path) -> None:
+    """Write a summary with mean +/- std across seeds."""
+    test_f1s = [r["test"]["macro_f1"] for r in reports]
+    test_accs = [r["test"]["accuracy"] for r in reports]
+    per_class_f1s: dict[str, list[float]] = {cls: [] for cls in CLASSES}
+    for r in reports:
+        for cls in CLASSES:
+            per_class_f1s[cls].append(r["test"]["per_class"][cls]["f1"])
+
+    summary = {
+        "n_seeds": len(reports),
+        "seeds": [r["config"]["seed"] for r in reports],
+        "test_macro_f1_mean": round(float(np.mean(test_f1s)), 4),
+        "test_macro_f1_std": round(float(np.std(test_f1s)), 4),
+        "test_accuracy_mean": round(float(np.mean(test_accs)), 4),
+        "test_accuracy_std": round(float(np.std(test_accs)), 4),
+        "per_class_f1_mean": {
+            cls: round(float(np.mean(vals)), 4) for cls, vals in per_class_f1s.items()
+        },
+        "per_class_f1_std": {
+            cls: round(float(np.std(vals)), 4) for cls, vals in per_class_f1s.items()
+        },
+        "run_names": [r["run_name"] for r in reports],
+    }
+
+    write_json(output_path / "multi_seed_summary.json", summary)
+
+    rows = [
+        [
+            cls,
+            f"{summary['per_class_f1_mean'][cls]:.4f}",
+            f"{summary['per_class_f1_std'][cls]:.4f}",
+        ]
+        for cls in CLASSES
+    ]
+    md = "\n".join([
+        "# Multi-seed Benchmark Summary",
+        "",
+        f"- Seeds: `{summary['seeds']}`",
+        f"- Test Macro-F1: `{summary['test_macro_f1_mean']:.4f} +/- {summary['test_macro_f1_std']:.4f}`",
+        f"- Test Accuracy: `{summary['test_accuracy_mean']:.4f} +/- {summary['test_accuracy_std']:.4f}`",
+        "",
+        "## Per-class F1",
+        "",
+        markdown_table(["Class", "F1 Mean", "F1 Std"], rows),
+        "",
+    ])
+    write_text(output_path / "multi_seed_summary.md", md)
+    print(f"Multi-seed summary: F1 = {summary['test_macro_f1_mean']:.4f} +/- {summary['test_macro_f1_std']:.4f}")
+
+
+def main() -> None:
+    args = parse_args()
+    config_path = resolve_project_path(PROJECT_ROOT, args.config)
+    config = load_yaml_config(config_path)
+    config = apply_overrides(
+        config,
+        {
+            "heldout_domain": args.heldout_domain,
+            "backbone": args.backbone,
+            "synthetic_manifest": args.synthetic_manifest,
+            "train_fraction": args.train_fraction,
+            "epochs": args.epochs,
+        },
+    )
+    config = validate_config(config)
+
+    seeds = args.seeds or [config["seed"]]
+
+    if len(seeds) == 1:
+        config["seed"] = seeds[0]
+        run_single_seed(config)
+    else:
+        reports = []
+        for seed in seeds:
+            print(f"\n{'='*60}")
+            print(f"Running seed {seed} ({seeds.index(seed)+1}/{len(seeds)})")
+            print(f"{'='*60}")
+            seed_config = {**config, "seed": seed}
+            report = run_single_seed(seed_config)
+            reports.append(report)
+
+        output_root = ensure_dir(resolve_project_path(PROJECT_ROOT, config["output_root"]))
+        heldout_root = output_root / config["backbone"] / f"heldout_{config['heldout_domain']}"
+        aggregate_multi_seed(reports, heldout_root)
 
 
 if __name__ == "__main__":

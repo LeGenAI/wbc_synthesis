@@ -1,0 +1,10 @@
+# Scoring / quality gate config.
+# Set synthetic_manifest, classifier_ckpt, and real_manifest before running.
+synthetic_manifest: null
+classifier_ckpt: null
+real_manifest: null
+output_root: results/mainline/scoring/run_01
+backbone: efficientnet_b0
+image_size: 224
+conf_threshold: 0.7
+sharp_floor_pctile: 20

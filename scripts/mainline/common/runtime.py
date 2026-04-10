@@ -42,10 +42,10 @@ def set_seed(seed: int) -> None:
 
 
 def get_device() -> torch.device:
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
     if torch.cuda.is_available():
         return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
     return torch.device("cpu")
 
 
@@ -77,4 +77,14 @@ def build_backbone(
             param.requires_grad = True
 
     return model
+
+
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    step_size: int = 10,
+    gamma: float = 0.5,
+) -> torch.optim.lr_scheduler.StepLR:
+    return torch.optim.lr_scheduler.StepLR(
+        optimizer, step_size=step_size, gamma=gamma,
+    )
 

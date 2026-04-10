@@ -1,0 +1,16 @@
+dataset_root: data/processed_multidomain
+domains:
+  - domain_a_pbc
+  - domain_b_raabin
+  - domain_c_mll23
+  - domain_e_amc
+classes:
+  - basophil
+  - eosinophil
+  - lymphocyte
+  - monocyte
+  - neutrophil
+val_ratio: 0.2
+split_seed: 42
+output_root: results/mainline/data
+
