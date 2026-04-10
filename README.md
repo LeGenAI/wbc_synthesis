@@ -42,7 +42,7 @@ wbc_synthesis/
 │   │   ├── benchmark/
 │   │   └── reporting/
 │   └── README.md
-├── reference/
+├── references/
 │   ├── reference_matrix.md
 │   ├── reference_matrix.csv
 │   └── references.bib
@@ -56,6 +56,26 @@ wbc_synthesis/
 
 > Legacy note: the original `00~07` pipeline has been moved under
 > `scripts/legacy/phase_00_07_initial_pipeline/`.
+
+## Mainline Entry Points
+
+현재 canonical mainline은 legacy `00~07`이 아니라 아래 두 stage부터 시작한다.
+
+```bash
+# 1) canonical multidomain manifests
+python scripts/mainline/data/01_prepare_multidomain_dataset.py \
+  --config configs/mainline/data/base.yaml
+
+# 2) leakage-safe LODO benchmark
+python scripts/mainline/benchmark/05_train_lodo_utility_benchmark.py \
+  --config configs/mainline/benchmark/real_only.yaml
+```
+
+관련 기준 문서:
+
+- `.claude/docs/research_audit.md`
+- `.claude/docs/research_redesign_rq.md`
+- `references/reference_matrix.md`
 
 ### 0. Install dependencies
 ```bash

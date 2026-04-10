@@ -1,0 +1,19 @@
+{
+  "manifest_type": "synthetic_pool",
+  "items": [
+    {
+      "file_abs": "/Users/imds/Desktop/wbc_synthesis/data/processed_multidomain/domain_a_pbc/basophil/pbc_basophil_000348.jpg",
+      "class_name": "basophil",
+      "domain": "domain_a_pbc",
+      "source_type": "synthetic",
+      "policy_id": "smoke_policy"
+    },
+    {
+      "file_abs": "/Users/imds/Desktop/wbc_synthesis/data/processed_multidomain/domain_b_raabin/basophil/raabin_basophil_000000.jpg",
+      "class_name": "basophil",
+      "domain": "domain_b_raabin",
+      "source_type": "synthetic",
+      "policy_id": "smoke_policy"
+    }
+  ]
+}

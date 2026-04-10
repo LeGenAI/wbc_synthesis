@@ -1,0 +1,20 @@
+{
+  "runs": [
+    {
+      "run_name": "real_only__efficientnet_b0__heldout_raabin__tf0p05__seed42",
+      "mode": "real_only",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.2297,
+      "test_accuracy": 0.3335,
+      "excluded_for_heldout_domain": 0
+    },
+    {
+      "run_name": "real_plus_synth__efficientnet_b0__heldout_raabin__tf0p02__seed42__synth_leakage_smoke_manifest",
+      "mode": "real_plus_synth",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.1573,
+      "test_accuracy": 0.146,
+      "excluded_for_heldout_domain": 1
+    }
+  ]
+}

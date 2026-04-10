@@ -20,6 +20,7 @@ pandas>=2.0.0
 tqdm>=4.65.0
 kagglehub>=0.2.0
 safetensors>=0.4.0
+PyYAML>=6.0.0
 # bitsandbytes — CUDA-only, no macOS arm64 wheel; removed
 # xformers — CUDA-only; MPS uses torch SDPA natively; removed
 

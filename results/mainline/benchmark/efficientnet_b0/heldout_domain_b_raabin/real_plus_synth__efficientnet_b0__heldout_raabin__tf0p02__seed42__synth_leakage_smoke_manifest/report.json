@@ -1,0 +1,425 @@
+{
+  "run_name": "real_plus_synth__efficientnet_b0__heldout_raabin__tf0p02__seed42__synth_leakage_smoke_manifest",
+  "mode": "real_plus_synth",
+  "backbone": "efficientnet_b0",
+  "heldout_domain": "domain_b_raabin",
+  "device": "mps",
+  "config": {
+    "mode": "real_plus_synth",
+    "manifest_root": "results/mainline/data",
+    "heldout_domain": "domain_b_raabin",
+    "backbone": "efficientnet_b0",
+    "batch_size": 16,
+    "epochs": 1,
+    "lr": 0.0003,
+    "weight_decay": 0.0001,
+    "seed": 42,
+    "train_fraction": 0.02,
+    "output_root": "results/mainline/benchmark",
+    "num_workers": 0,
+    "image_size": 224,
+    "full_finetune": false,
+    "synthetic_manifest": "results/mainline/benchmark/leakage_smoke_manifest.json",
+    "synthetic_sampling_weight": 0.5,
+    "leakage_filter": true
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 1.5982,
+      "val_accuracy": 0.3089,
+      "val_macro_f1": 0.2813,
+      "val_loss": 1.5625
+    }
+  ],
+  "val": {
+    "loss": 1.5625,
+    "accuracy": 0.3089,
+    "macro_f1": 0.2813,
+    "per_class": {
+      "basophil": {
+        "precision": 0.1009,
+        "recall": 0.5,
+        "f1": 0.168,
+        "support": 392
+      },
+      "eosinophil": {
+        "precision": 0.3151,
+        "recall": 0.3854,
+        "f1": 0.3467,
+        "support": 1313
+      },
+      "lymphocyte": {
+        "precision": 0.4396,
+        "recall": 0.2077,
+        "f1": 0.2821,
+        "support": 2191
+      },
+      "monocyte": {
+        "precision": 0.1588,
+        "recall": 0.2856,
+        "f1": 0.2041,
+        "support": 984
+      },
+      "neutrophil": {
+        "precision": 0.5334,
+        "recall": 0.3271,
+        "f1": 0.4055,
+        "support": 3809
+      }
+    },
+    "confusion_matrix": [
+      [
+        196,
+        78,
+        24,
+        46,
+        48
+      ],
+      [
+        311,
+        506,
+        49,
+        253,
+        194
+      ],
+      [
+        334,
+        335,
+        455,
+        455,
+        612
+      ],
+      [
+        254,
+        110,
+        103,
+        281,
+        236
+      ],
+      [
+        847,
+        577,
+        404,
+        735,
+        1246
+      ]
+    ]
+  },
+  "test": {
+    "loss": 1.7035,
+    "accuracy": 0.146,
+    "macro_f1": 0.1573,
+    "per_class": {
+      "basophil": {
+        "precision": 0.0094,
+        "recall": 0.3289,
+        "f1": 0.0182,
+        "support": 301
+      },
+      "eosinophil": {
+        "precision": 0.187,
+        "recall": 0.2045,
+        "f1": 0.1953,
+        "support": 1066
+      },
+      "lymphocyte": {
+        "precision": 0.3127,
+        "recall": 0.2771,
+        "f1": 0.2938,
+        "support": 3609
+      },
+      "monocyte": {
+        "precision": 0.1296,
+        "recall": 0.0893,
+        "f1": 0.1057,
+        "support": 795
+      },
+      "neutrophil": {
+        "precision": 0.9044,
+        "recall": 0.0958,
+        "f1": 0.1733,
+        "support": 10862
+      }
+    },
+    "confusion_matrix": [
+      [
+        99,
+        76,
+        55,
+        56,
+        15
+      ],
+      [
+        593,
+        218,
+        209,
+        41,
+        5
+      ],
+      [
+        2197,
+        251,
+        1000,
+        86,
+        75
+      ],
+      [
+        436,
+        95,
+        178,
+        71,
+        15
+      ],
+      [
+        7245,
+        526,
+        1756,
+        294,
+        1041
+      ]
+    ]
+  },
+  "split_stats": {
+    "train": {
+      "total": 696,
+      "rows": [
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "basophil",
+          "source_type": "real",
+          "count": 19
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "basophil",
+          "source_type": "synthetic",
+          "count": 1
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "eosinophil",
+          "source_type": "real",
+          "count": 50
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "lymphocyte",
+          "source_type": "real",
+          "count": 19
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "monocyte",
+          "source_type": "real",
+          "count": 23
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "neutrophil",
+          "source_type": "real",
+          "count": 53
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "basophil",
+          "source_type": "real",
+          "count": 10
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "eosinophil",
+          "source_type": "real",
+          "count": 39
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "lymphocyte",
+          "source_type": "real",
+          "count": 89
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "monocyte",
+          "source_type": "real",
+          "count": 40
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "neutrophil",
+          "source_type": "real",
+          "count": 115
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "basophil",
+          "source_type": "real",
+          "count": 2
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "eosinophil",
+          "source_type": "real",
+          "count": 16
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "lymphocyte",
+          "source_type": "real",
+          "count": 67
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "monocyte",
+          "source_type": "real",
+          "count": 16
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "neutrophil",
+          "source_type": "real",
+          "count": 137
+        }
+      ]
+    },
+    "val": {
+      "total": 8689,
+      "rows": [
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "basophil",
+          "source_type": "real",
+          "count": 244
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "eosinophil",
+          "source_type": "real",
+          "count": 623
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "lymphocyte",
+          "source_type": "real",
+          "count": 243
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "monocyte",
+          "source_type": "real",
+          "count": 284
+        },
+        {
+          "domain": "domain_a_pbc",
+          "class_name": "neutrophil",
+          "source_type": "real",
+          "count": 666
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "basophil",
+          "source_type": "real",
+          "count": 123
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "eosinophil",
+          "source_type": "real",
+          "count": 490
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "lymphocyte",
+          "source_type": "real",
+          "count": 1106
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "monocyte",
+          "source_type": "real",
+          "count": 502
+        },
+        {
+          "domain": "domain_c_mll23",
+          "class_name": "neutrophil",
+          "source_type": "real",
+          "count": 1434
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "basophil",
+          "source_type": "real",
+          "count": 25
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "eosinophil",
+          "source_type": "real",
+          "count": 200
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "lymphocyte",
+          "source_type": "real",
+          "count": 842
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "monocyte",
+          "source_type": "real",
+          "count": 198
+        },
+        {
+          "domain": "domain_e_amc",
+          "class_name": "neutrophil",
+          "source_type": "real",
+          "count": 1709
+        }
+      ]
+    },
+    "test": {
+      "total": 16633,
+      "rows": [
+        {
+          "domain": "domain_b_raabin",
+          "class_name": "basophil",
+          "source_type": "real",
+          "count": 301
+        },
+        {
+          "domain": "domain_b_raabin",
+          "class_name": "eosinophil",
+          "source_type": "real",
+          "count": 1066
+        },
+        {
+          "domain": "domain_b_raabin",
+          "class_name": "lymphocyte",
+          "source_type": "real",
+          "count": 3609
+        },
+        {
+          "domain": "domain_b_raabin",
+          "class_name": "monocyte",
+          "source_type": "real",
+          "count": 795
+        },
+        {
+          "domain": "domain_b_raabin",
+          "class_name": "neutrophil",
+          "source_type": "real",
+          "count": 10862
+        }
+      ]
+    }
+  },
+  "synthetic_guard": {
+    "excluded_for_heldout_domain": 1,
+    "synthetic_train_items_used": 1,
+    "synthetic_manifest": "/Users/imds/Desktop/wbc_synthesis/results/mainline/benchmark/leakage_smoke_manifest.json",
+    "excluded_domain": "domain_b_raabin"
+  },
+  "artifacts": {
+    "confusion_matrix_png": "/Users/imds/Desktop/wbc_synthesis/results/mainline/benchmark/efficientnet_b0/heldout_domain_b_raabin/real_plus_synth__efficientnet_b0__heldout_raabin__tf0p02__seed42__synth_leakage_smoke_manifest/confusion_matrix.png"
+  }
+}

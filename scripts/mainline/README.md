@@ -21,4 +21,6 @@
 
 - 새 실험은 numbered legacy 흐름을 잇지 않는다.
 - 새 스크립트는 위 stage에만 추가한다.
-- novelty 주장은 반드시 `reference/reference_matrix.md`와 함께 읽히도록 설계한다.
+- novelty 주장은 반드시 `references/reference_matrix.md`와 함께 읽히도록 설계한다.
+- stage `01`과 `05`는 지금부터 canonical spine이다.
+- 기본 config는 `configs/mainline/data/base.yaml`, `configs/mainline/benchmark/*.yaml`에 둔다.

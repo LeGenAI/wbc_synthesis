@@ -10,7 +10,7 @@ It contains:
 
 - a preserved `legacy` research history
 - a new `mainline` scaffold for the next canonical research cycle
-- a separate `reference/` archive for source-grounded literature review and novelty framing
+- a separate `references/` archive for source-grounded literature review and novelty framing
 
 The current canonical interpretation of the project is:
 
@@ -22,9 +22,9 @@ This is not the same question as the original repo setup.
 
 The current mainline direction is defined by:
 
-- `results/research_audit.md`
-- `results/research_redesign_rq.md`
-- `reference/reference_matrix.md`
+- `.claude/docs/research_audit.md`
+- `.claude/docs/research_redesign_rq.md`
+- `references/reference_matrix.md`
 
 The important shift is:
 
@@ -38,7 +38,7 @@ The important shift is:
 - The next research cycle is a `generation-policy redesign` cycle.
 - `LODO/selective subset` remains as an evaluation frame, not the main intervention.
 - `boundary-aware V2` is preserved as a support branch and failure/lesson branch, not the canonical main story.
-- Strong novelty claims must be grounded in `reference/reference_matrix.md` first.
+- Strong novelty claims must be grounded in `references/reference_matrix.md` first.
 
 ## Important Correction
 
@@ -113,19 +113,19 @@ Stage order follows the supplementary-method structure:
 
 Current files are scaffolds and should be filled in this order.
 
-### `reference/`
+### `references/`
 
 This directory is not optional bookkeeping.
 
 It is a research gate.
 
-- `reference/reference_matrix.md`
+- `references/reference_matrix.md`
   reviewed literature matrix
-- `reference/reference_matrix.csv`
+- `references/reference_matrix.csv`
   sortable table form
-- `reference/references.bib`
+- `references/references.bib`
   validated citations
-- `reference/sources/`
+- `references/sources/`
   local copies of papers, landing pages, official repo READMEs, and BibTeX
 
 Novelty language should be checked against this directory before it is strengthened anywhere else.
@@ -202,7 +202,7 @@ Agents working on new research code should preserve these constraints.
 2. The main intervention should be `generation policy`, not endless subset heuristics.
 3. Selection logic can remain as evaluation support, but should not replace the main research variable.
 4. `boundary-aware` metrics alone are not a paper claim.
-5. Avoid strong novelty claims unless they are supportable from `reference/`.
+5. Avoid strong novelty claims unless they are supportable from `references/`.
 
 ## Practical Coding Guidance
 
@@ -235,15 +235,15 @@ When adding new code:
 - do not add new numbered root-level scripts
 - do not treat all legacy branches as equally canonical
 - do not summarize the project as only “8-class robustness with SDXL-LoRA”
-- do not write novelty claims without checking `reference/reference_matrix.md`
+- do not write novelty claims without checking `references/reference_matrix.md`
 
 ## Recommended Read Order
 
 If you need to understand the research before editing code, read in this order:
 
-1. `results/research_audit.md`
-2. `reference/reference_matrix.md`
-3. `results/research_redesign_rq.md`
+1. `.claude/docs/research_audit.md`
+2. `references/reference_matrix.md`
+3. `.claude/docs/research_redesign_rq.md`
 4. `scripts/README.md`
 5. the relevant `scripts/legacy/phase_*` directory
 

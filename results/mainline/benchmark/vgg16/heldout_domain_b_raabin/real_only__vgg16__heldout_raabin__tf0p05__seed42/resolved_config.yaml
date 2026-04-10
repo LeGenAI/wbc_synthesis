@@ -1,0 +1,17 @@
+mode: real_only
+manifest_root: results/mainline/data
+heldout_domain: domain_b_raabin
+backbone: vgg16
+batch_size: 16
+epochs: 1
+lr: 0.0003
+weight_decay: 0.0001
+seed: 42
+train_fraction: 0.05
+output_root: results/mainline/benchmark
+num_workers: 0
+image_size: 224
+full_finetune: false
+synthetic_manifest: null
+synthetic_sampling_weight: 1.0
+leakage_filter: true
