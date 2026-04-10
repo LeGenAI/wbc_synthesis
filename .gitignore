@@ -36,58 +36,12 @@ logs/
 
 # ── Results (legacy experiment outputs, ~1.6 GB) ─────────────────
 # Bulk image galleries and JSON dumps from legacy phases
-results/ablation/
-results/augment_eval/
-results/augmented/
-results/baseline/
-results/basophil_gallery/
-results/boundary_aware_variation/
-results/boundary_selective_synth/
-results/boundary_selective_synth_archive/
-results/boundary_v2_acceptance/
-results/boundary_v2_generation/
-results/boundary_v2_generation_archive/
-results/boundary_v2_generation_runs/
-results/boundary_v2_lodo/
-results/combined_diversity/
-results/contextual_masks/
-results/contextual_preprocess/
-results/corrupted/
-results/cross_domain/
-results/crossdomain_eval/
-results/crossdomain_eval_sort/
-results/crossdomain_next_batch/
-results/diverse_generation/
-results/diversity_reeval/
-results/domain_gap/
-results/domain_strength_eval/
-results/fewshot_diversity_eval/
-results/fullclass_strength_eval/
-results/generation_test/
-results/ip_scale_sweep/
-results/lodo_baseline/
-results/multidomain_cnn_train/
-results/paper_figures/
-results/prompt_diversity/
-results/reference_audit/
-results/router_test/
-results/router_test_final/
-results/router_test_v2/
-results/router_test_v2_gen/
-results/router_train/
-results/selective_synth/
-results/strength_compare/
-results/synth_aug/
-results/vgg16_cnn_train/
-results/vgg16_reeval/
-
-# Legacy HTML galleries
-results/*.html
+results/legacy/
 
 # Keep: research docs (*.md), paper_submission/, and top-level results dir
 
 # ── Reference local copies (PDFs, ~51 MB) ────────────────────────
-reference/sources/
+references/
 
 # ── Jupyter / notebook ────────────────────────────────────────────
 .ipynb_checkpoints/
