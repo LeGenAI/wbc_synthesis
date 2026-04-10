@@ -1,0 +1,167 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\title{Utility-Aware and Domain-Specific Subset Selection for Synthetic White Blood Cell Augmentation}
+\author{Author Name Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We study whether synthetic white blood cell (WBC) images improve multi-class WBC classification under domain shift. Prior experiments in this codebase showed that naive synthetic augmentation can fail or even degrade performance, suggesting that the key question is not whether synthetic data helps in general, but which synthetic subset helps for which target domain. We therefore introduced a leave-one-domain-out (LODO) benchmark across four WBC domains and evaluated utility-aware subset selection strategies built from a large-scale synthetic corpus of 6,720 generated images. We compared baseline real-only training against multiple subset policies, including CNN-correct filtering, high-confidence filtering, hard-class-focused subsets, and class-targeted subsets. The baseline LODO setting yielded an average Macro-F1 of 0.5826, confirming that the benchmark is meaningfully challenging. In contrast, domain-specific subset selection improved the best per-domain Macro-F1 to 0.6874 on AMC, 0.6379 on PBC, and 0.6864 on Raabin, while MLL23 required no synthetic augmentation. Importantly, the optimal policy differed by held-out domain: AMC benefited most from hard-class-focused synthesis, PBC from high-confidence filtering, and Raabin from monocyte-only targeted synthesis. These results show that synthetic augmentation for medical image classification should be treated as a utility-aware and domain-specific data selection problem, not a quantity maximization problem.
+\end{abstract}
+
+\section{Introduction}
+
+Synthetic image generation has emerged as a promising tool for mitigating data scarcity in medical imaging. However, in practice, the availability of a large synthetic corpus does not guarantee downstream improvement. Earlier experiments in this project showed that naive synthetic augmentation can be neutral or harmful, especially when the evaluation protocol is too easy or when synthetic samples are added without regard to downstream utility.
+
+In this work, we revisit synthetic augmentation for five-class WBC classification through the lens of domain shift. We argue that the central problem is not synthetic image generation alone, but selective use of synthetic images according to target-domain weakness. To evaluate this hypothesis, we construct a leave-one-domain-out benchmark across four domains and compare multiple synthetic subset policies.
+
+\section{Methods}
+
+\subsection{LODO Benchmark}
+
+We used four WBC domains: AMC, PBC, Raabin, and MLL23. For each experiment, one domain was held out for test-time evaluation, and the remaining domains were used for training and validation.
+
+\subsection{Synthetic Subset Policies}
+
+We evaluated the following subset strategies:
+\begin{itemize}
+  \item \textbf{S2: CNN-correct}: keep only synthetic images with correct CNN prediction.
+  \item \textbf{S3: High-confidence correct}: keep only CNN-correct images with confidence above threshold.
+  \item \textbf{S7: Hard-classes only}: use only synthetic images from hard classes.
+  \item \textbf{S10: Monocyte only}: use only monocyte synthetic images for class-targeted rescue.
+\end{itemize}
+
+\subsection{Evaluation Metric}
+
+We report domain-level accuracy and macro-F1, along with per-class F1 for qualitative interpretation of rescue effects.
+
+\section{Results}
+
+\subsection{LODO baseline is meaningfully difficult}
+
+The real-only baseline achieved an average Macro-F1 of 0.5826 across held-out domains, confirming that the LODO setup is substantially more challenging than easy validation splits.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\linewidth]{../paper_figures/fig02_lodo_baseline_macro_f1.png}
+  \caption{Baseline LODO Macro-F1 by held-out domain.}
+  \label{fig:lodo-baseline}
+\end{figure}
+
+\subsection{A single subset policy does not generalize across domains}
+
+We first tested the domain-agnostic subset \texttt{S2}. While it improved some held-out domains, it degraded others, indicating that synthetic subset quality is domain-dependent rather than universal.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{../paper_figures/fig03_subset_ablation_macro_f1.png}
+  \caption{Subset ablation across held-out domains. The best subset differs by target domain.}
+  \label{fig:subset-ablation}
+\end{figure}
+
+\subsection{Best subset selection is domain-specific}
+
+The best policy by held-out domain was \texttt{S7} for AMC, \texttt{S3} for PBC, \texttt{S10} for Raabin, and baseline for MLL23.
+
+\begin{table}[H]
+  \centering
+  \caption{Best setting by held-out domain.}
+  \label{tab:best-by-domain}
+  \begin{tabular}{lcccc}
+    \toprule
+    Held-out Domain & Best Setting & Accuracy & Macro-F1 & Delta vs Baseline \\
+    \midrule
+    AMC & \texttt{S7\_hard\_classes\_only} & 0.8897 & 0.6874 & +0.0981 \\
+    PBC & \texttt{S3\_high\_conf\_correct} & 0.7168 & 0.6379 & +0.1980 \\
+    Raabin & \texttt{S10\_monocyte\_only} & 0.8927 & 0.6864 & +0.1191 \\
+    MLL23 & baseline & 0.7822 & 0.7340 & +0.0000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.78\linewidth]{../paper_figures/fig04_best_setting_by_domain.png}
+  \caption{Best domain-specific policy compared with baseline.}
+  \label{fig:best-by-domain}
+\end{figure}
+
+\subsection{Class-targeted synthesis rescues severe class collapse}
+
+The strongest class-targeted effect was observed for Raabin. Monocyte F1 improved from 0.0303 in baseline to 0.2191 with \texttt{S7} and further to 0.3004 with \texttt{S10}. This indicates that class-targeted synthetic augmentation can rescue severe domain-specific failure modes.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{../paper_figures/fig05_raabin_per_class_rescue.png}
+  \caption{Raabin per-class F1 comparison across baseline, \texttt{S2}, \texttt{S7}, and \texttt{S10}.}
+  \label{fig:raabin-rescue}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{../paper_figures/fig06_amc_pbc_best_per_class.png}
+  \caption{Per-class F1 comparison for the best policy on AMC and PBC.}
+  \label{fig:amc-pbc-best}
+\end{figure}
+
+\subsection{Qualitative examples}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../diverse_generation/basophil/grid_AMC.png}
+    \caption{AMC basophil grid}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../diverse_generation/eosinophil/grid_AMC.png}
+    \caption{AMC eosinophil grid}
+  \end{subfigure}
+
+  \vspace{0.8em}
+
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../diverse_generation/eosinophil/grid_PBC.png}
+    \caption{PBC eosinophil grid}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../diverse_generation/monocyte/grid_Raabin.png}
+    \caption{Raabin monocyte grid}
+  \end{subfigure}
+  \caption{Representative qualitative synthetic examples from the large-scale generation pipeline.}
+  \label{fig:qualitative}
+\end{figure}
+
+\section{Discussion}
+
+The main lesson of this study is that synthetic medical image augmentation should not be optimized for quantity alone. The same large synthetic corpus produced positive, neutral, and negative outcomes depending on the selected subset and the held-out target domain. This explains why earlier naive augmentation experiments underperformed: they treated synthetic data as a bulk additive resource rather than a conditional intervention matched to domain-specific weaknesses. Our results suggest a practical recipe for future work: first define a challenging domain-shift benchmark, then identify the weak classes of the held-out domain, and only then select the synthetic subset that aligns with those weaknesses.
+
+\section{Conclusion}
+
+Synthetic WBC augmentation is useful when it is utility-aware and domain-specific. A single universal subset policy is suboptimal. Instead, target-domain weakness should drive synthetic subset selection, including class-targeted augmentation when necessary.
+
+\end{document}

@@ -1,0 +1,274 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{fontspec}
+\usepackage{kotex}
+
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Menlo}
+\setmainhangulfont{Apple SD Gothic Neo}
+\setsanshangulfont{Apple SD Gothic Neo}
+\setmonohangulfont{Apple SD Gothic Neo}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\title{합성 백혈구 이미지 증강을 위한 유틸리티 인지형 및 도메인 특이적 서브셋 선택}
+\author{저자명 Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+본 연구는 도메인 이동 환경에서 합성 백혈구(white blood cell, WBC) 이미지가 5분류 WBC 분류 성능을 실제로 향상시키는지 분석한다. 기존 코드베이스의 여러 실험에서는 합성 데이터를 단순히 추가하는 방식이 성능을 높이지 못하거나 오히려 악화시킬 수 있음을 확인하였다. 이에 본 연구는 ``합성 데이터가 전반적으로 도움이 되는가''가 아니라, ``어떤 합성 서브셋이 어떤 목표 도메인에서 도움이 되는가''가 핵심 질문이라고 보았다. 이를 위해 4개 WBC 도메인에 대해 leave-one-domain-out(LODO) 벤치마크를 구성하고, 총 6,720장의 대규모 합성 이미지로부터 유틸리티 인지형 서브셋 선택 전략을 평가하였다. 우리는 real-only baseline과 함께 CNN-correct filtering, high-confidence filtering, hard-class-focused subset, class-targeted subset을 비교하였다. LODO baseline의 평균 Macro-F1는 0.5826으로, 본 벤치마크가 충분히 어려운 설정임을 보여주었다. 반면 도메인별 최적 서브셋을 선택했을 때 AMC는 0.7231, PBC는 0.6379, Raabin은 0.7655까지 향상되었고, MLL23은 합성 증강의 이득이 거의 없었다. 특히 최적 전략은 도메인마다 달랐으며, AMC와 Raabin은 hard-class-focused subset에서, PBC는 high-confidence subset에서 가장 큰 개선을 보였다. 추가로 세포 중심부는 보존하고 배경을 더 강하게 변형하는 boundary-aware 생성 분기를 탐색한 결과, low-margin monocyte 샘플을 실제로 만들 수 있었으나 downstream utility는 아직 기존 best subset을 넘지 못했다. 이러한 결과는 의료영상 분류에서 합성 데이터 증강이 ``생성량 확대'' 문제가 아니라, 목표 도메인의 약점에 맞춘 유틸리티 인지형 데이터 선택 문제임을 시사한다.
+\end{abstract}
+
+\section{서론}
+
+합성 이미지 생성은 의료영상에서 데이터 부족과 클래스 불균형을 완화할 수 있는 유망한 도구로 널리 논의되어 왔다. 특히 확산모델 기반 생성기는 제한된 실데이터를 보완하고, 희소한 형태학적 변이를 인위적으로 확보할 수 있다는 점에서 큰 관심을 받아왔다. 그러나 실제 분류 성능 관점에서 보면, ``합성 이미지가 많다''는 사실만으로 유의미한 일반화 향상이 보장되지는 않는다. 의료영상에서는 작은 형태 왜곡이나 비현실적 질감도 분류기의 decision boundary를 쉽게 흐릴 수 있으며, 도메인 이동이 존재하는 경우에는 이러한 문제가 더욱 심화된다.
+
+백혈구 분류는 이러한 문제를 관찰하기에 적합한 과제이다. 서로 다른 병원 및 공개 데이터셋은 염색법, 광학 장비, 촬영 배율, 배경 통계, 전처리 방식이 상이하며, 동일한 세포 클래스라도 도메인에 따라 시각적 분포가 크게 달라질 수 있다. 또한 monocyte, eosinophil, basophil과 같이 상대적으로 어려운 클래스는 소수 클래스이거나 형태 변이가 커서, 단순한 데이터 증강만으로는 안정적인 성능 확보가 쉽지 않다. 따라서 본 문제에서 중요한 것은 합성 이미지의 총량을 늘리는 것 자체가 아니라, 어떤 synthetic sample이 어떤 도메인과 어떤 취약 클래스에 실제로 도움이 되는지를 식별하는 일이다.
+
+본 프로젝트의 선행 실험에서도 이 점은 반복적으로 확인되었다. 합성 데이터를 훈련셋에 일괄 추가하는 naive augmentation은 기대한 성능 향상을 보이지 못했으며, 경우에 따라서는 오히려 성능을 저하시켰다. 또한 평가 설정이 지나치게 쉬운 경우에는 synthetic augmentation의 기여를 제대로 구분할 수 없었다. 이는 합성 데이터 연구가 생성 품질만으로는 충분하지 않으며, ``어떤 평가 무대에서''와 ``어떤 선택 정책으로'' synthetic sample을 사용할 것인지까지 함께 설계되어야 함을 시사한다.
+
+이에 본 연구는 5종 백혈구 분류 문제를 도메인 일반화 관점에서 다시 정식화한다. 우리는 핵심 질문을 ``합성 이미지를 얼마나 많이 생성할 수 있는가''에서 ``목표 도메인의 약점에 맞는 합성 서브셋을 어떻게 선택할 것인가''로 전환하였다. 이를 위해 4개 도메인 기반의 leave-one-domain-out(LODO) 벤치마크를 구축하고, 대규모 멀티도메인 합성 이미지로부터 다양한 유틸리티 인지형 서브셋 정책을 구성하여 비교하였다.
+
+본 연구의 기여는 다음 세 가지로 요약할 수 있다. 첫째, 4개 WBC 도메인을 이용해 실제 domain shift를 드러내는 LODO 평가 환경을 구축하였다. 둘째, SDXL 기반 멀티도메인 DreamBooth형 LoRA와 img2img 파이프라인을 이용해 총 6,720장의 합성 WBC 이미지를 생성하고, 이를 이미지별 utility proxy에 따라 여러 서브셋으로 구조화하였다. 셋째, 단일 universal policy가 아니라 도메인별로 상이한 synthetic subset selection이 필요함을 보였으며, 일부 도메인에서는 class-targeted augmentation이 심각한 클래스 붕괴를 실질적으로 완화할 수 있음을 확인하였다.
+
+\section{방법}
+
+\subsection{멀티도메인 데이터 정규화}
+
+본 연구는 4개 도메인, 즉 PBC(Spain), Raabin(Iran), MLL23(Germany), AMC(Korea)를 사용하였다. 원본 데이터는 도메인마다 파일 구조, 클래스명, 해상도, 초점 평면, 파일 포맷이 달랐기 때문에, 먼저 모든 도메인을 동일한 클래스 체계와 이미지 형식으로 정규화하였다. 구체적으로 클래스명은 basophil, eosinophil, lymphocyte, monocyte, neutrophil의 5개로 통일하였고, 모든 이미지는 세포가 가능한 한 중앙에 위치하도록 center crop을 수행한 뒤 $224 \times 224$ 해상도로 변환하여 JPG(quality=95)로 저장하였다. AMC 데이터는 다중 초점면 가운데 고정된 한 평면만 사용하여 초점 선택 변동성을 제거했고, MLL23의 TIFF 이미지는 동일한 crop-resize 과정을 거쳐 JPG로 변환하였다. 이 과정을 통해 각 도메인은 동일한 디렉터리 구조와 동일한 클래스 라벨 체계를 갖는 멀티도메인 학습용 데이터셋으로 재구성되었다.
+
+이 정규화 단계의 목적은 단순한 파일 변환이 아니라, 생성 모델과 분류 모델이 도메인 차이 외의 불필요한 구현 차이를 학습하지 않도록 입력 공간을 맞추는 데 있다. 즉, 이후 단계에서 관찰되는 성능 차이가 파일 형식이나 폴더 구조의 차이 때문이 아니라, 실제 stain, scanner, morphology 분포 차이에서 비롯되도록 실험 조건을 정리한 것이다.
+
+\subsection{생성 모델 선택: 멀티도메인 DreamBooth형 LoRA 채택}
+
+생성 전략 선택 단계에서는 두 개의 서로 다른 접근을 먼저 비교하였다. 첫 번째는 실제 혈구 이미지를 입력으로 주고, 그 구조를 크게 해치지 않는 범위에서 색감, 질감, 핵 모양의 세부 표현을 재합성하는 img2img 기반 전략이었다. 이 방식은 세포의 대략적인 윤곽, 핵 위치, 세포질 비율 같은 구조적 단서를 참조 이미지에서 직접 가져오기 때문에 클래스 정체성을 보존하기 쉽다. 두 번째는 참조 이미지 없이 텍스트 설명만으로 이미지를 처음부터 샘플링하는 순수 text-to-image 전략이었다. 이 방식은 이론상 더 자유로운 다양성을 만들 수 있지만, 혈액도말 이미지처럼 형태학적 경계가 엄격한 문제에서는 핵 형태와 과립 패턴이 쉽게 무너졌다.
+
+탐색 실험 결과, 본 과제의 혈액도말 현미경 이미지에서는 참조 이미지를 사용하는 img2img 기반 전략이 훨씬 안정적이었다. 예를 들어 basophil 비교 실험에서 멀티도메인 DreamBooth는 CNN accuracy $100.0\%$, FD 30.21, SSIM 0.6914를 보인 반면, 멀티도메인 T2I LoRA는 CNN accuracy $70.0\%$, FD 159.29, SSIM 0.4198에 그쳤다. 즉, T2I 경로는 ``다양성''은 만들 수 있었지만, 실제 분류에 필요한 핵심 morphology를 안정적으로 보존하지 못했다. 따라서 본 논문의 대규모 생성 실험과 후속 selective augmentation 실험은 모두 ``참조 이미지를 유지하되 일정 수준의 변형을 허용하는'' 멀티도메인 DreamBooth형 LoRA + SDXL img2img 경로로 고정하였다.
+
+\subsection{멀티도메인 SDXL LoRA 파인튜닝}
+
+생성 backbone은 SDXL base 1.0이었다. 각 클래스마다 하나의 전문가 LoRA를 별도로 학습하였으며, 최종적으로 basophil, eosinophil, lymphocyte, monocyte, neutrophil에 대응하는 5개의 멀티도메인 LoRA를 사용하였다. 즉, 하나의 공용 LoRA에 모든 클래스를 섞어 넣는 대신, 클래스 정체성을 더 안정적으로 보존하기 위해 클래스별 전문가 LoRA를 선택하였다.
+
+각 클래스에 대해 도메인별로 최대 200장의 실이미지를 균등 샘플링하여 하나의 mixed dataset으로 구성하였다. 따라서 대부분 클래스는 클래스당 최대 800장(4도메인 $\times$ 200장)을 사용했고, basophil은 AMC 데이터 부족으로 실제 총 727장이 사용되었다. 이때 중요한 점은 단순히 이미지를 한 폴더에 모으는 데서 끝나지 않고, 각 이미지에 대응되는 텍스트 설명을 함께 부여했다는 것이다. 이 설명은 두 종류의 정보를 포함했다. 첫째는 클래스 형태 정보로, 예를 들어 bilobed nucleus, orange-red granules, kidney-shaped nucleus 같은 세포학적 morphology를 기술하였다. 둘째는 도메인 정보로, 염색법, 스캐너 혹은 촬영 장비, 임상 실험실 맥락 등을 프롬프트에 포함하였다. 즉, 모델은 ``어떤 클래스의 혈구인가''와 ``어떤 도메인 스타일인가''를 동시에 학습하도록 구성되었다.
+
+실제로는 클래스마다 별도의 학습 폴더와 메타데이터 파일을 만들고, 각 이미지-캡션 쌍을 순차적으로 읽어 SDXL에 LoRA 가중치를 적응시켰다. 이때 참조 데이터는 여러 도메인에서 가져오지만, 클래스는 하나로 고정되어 있기 때문에 LoRA는 ``한 클래스 내부의 도메인 다양성''을 학습하게 된다. 예를 들어 eosinophil LoRA는 PBC식 색감과 AMC식 배경 조직감을 모두 보지만, 동시에 eosinophil에서 공통으로 유지되어야 하는 orange-red granule과 bilobed nucleus 패턴을 반복적으로 보게 된다. 이 설계는 ``도메인이 바뀌어도 클래스 정체성은 유지되는'' 생성기를 만들기 위한 것이다.
+
+LoRA 학습 설정은 다음과 같다.
+\begin{itemize}
+  \item base model: SDXL base 1.0
+  \item training resolution: $256 \times 256$
+  \item LoRA rank: 8
+  \item batch size: 1
+  \item gradient accumulation: 2 (effective batch size = 2)
+  \item optimizer steps: 400
+  \item learning rate: $5 \times 10^{-5}$
+  \item scheduler: cosine, warmup steps = 10
+  \item train text encoder: off
+  \item gradient checkpointing: off
+  \item mixed precision: off (\texttt{fp32}, MPS 안정성 목적)
+  \item random horizontal flip: on
+\end{itemize}
+
+즉, 본 연구의 생성 모델은 ``SDXL base + 클래스별 멀티도메인 LoRA'' 구조이며, LoRA는 UNet에만 적용하였다. 이는 text encoder까지 함께 미세조정하는 설정보다 메모리 사용량과 계산량을 줄이면서도 현미경 이미지의 class-specific morphology와 domain style을 안정적으로 적응시키기 위한 선택이었다. 다시 말해, 파인튜닝 단계의 목적은 완전히 새로운 혈구를 처음부터 생성하도록 만드는 것이 아니라, SDXL base의 일반적인 시각 표현 능력 위에 백혈구 형태와 도메인별 stain/scanner style을 가볍게 주입하는 데 있었다. 실제로 이 단계에서 학습되는 것은 ``새로운 세포 개념''이라기보다, 특정 클래스가 어떤 핵 구조와 과립 패턴을 가져야 하는지, 그리고 그 클래스가 서로 다른 실험실 도메인에서 어떤 색조와 배경 통계를 보이는지에 대한 저차원 보정이다.
+
+\subsection{대규모 img2img 생성 파이프라인}
+
+대규모 합성은 SDXL img2img 파이프라인을 사용해 수행하였다. 생성 시에는 실제 혈구 이미지를 참조 이미지로 넣고, LoRA가 주입된 SDXL이 이 참조 이미지를 바탕으로 동일 클래스의 새로운 혈구 이미지를 재합성하도록 구성하였다. scheduler는 DPMSolverMultistepScheduler with Karras sigmas로 설정했고, 각 참조 이미지는 $512 \times 512$로 리사이즈한 뒤 img2img 입력으로 사용하였다.
+
+인퍼런스 설정은 다음과 같다.
+\begin{itemize}
+  \item generation mode: img2img
+  \item guidance scale: 6.0
+  \item inference steps: 25
+  \item negative prompt: cartoon, watermark, multiple cells, unrealistic colors, deformed nucleus, blurry 등
+  \item denoise strength: 0.25, 0.35, 0.45
+\end{itemize}
+
+생성 다양성은 네 축에서 확보하였다. 첫째, 소스 도메인을 4개(PBC, Raabin, MLL23, AMC)로 분리하여 서로 다른 stain 및 scanner style을 반영하도록 했다. 둘째, denoise strength를 3수준으로 변화시켜 참조 구조를 얼마나 강하게 보존할지를 조절했다. 낮은 strength는 원본 세포 구조를 더 많이 유지하고, 높은 strength는 더 큰 형태 변형과 스타일 변화를 허용한다. 셋째, morphology는 유지하되 문장 표현을 달리하는 4개의 프롬프트 템플릿(standard, oil immersion, clinical hematology, cytology)을 사용하였다. 넷째, seed를 변화시켜 확률적 다양성을 추가하였다. 본 논문의 대규모 본실험에서는 도메인당 14장의 참조 이미지와 2개의 seed를 사용했으므로, 클래스당 생성 수는 $4 \times 14 \times 3 \times 4 \times 2 = 1,344$장이었고, 총 5개 클래스에 대해 6,720장을 생성하였다.
+
+생성 루프는 클래스별로 독립적으로 수행되었다. 먼저 한 클래스에 해당하는 LoRA를 SDXL backbone에 로드하고, 그 클래스의 4개 도메인 실이미지 중에서 참조 이미지를 선택한다. 이후 각 참조 이미지마다 3개의 denoise strength, 4개의 프롬프트 템플릿, 2개의 랜덤 seed를 순회하며 이미지를 생성한다. 따라서 하나의 참조 이미지는 여러 조합으로부터 복수의 synthetic variant를 만든다. 이 방식의 장점은 다양성의 원인을 추적할 수 있다는 점이다. 즉, 특정 이미지가 실패했을 때 그것이 과도한 denoise strength 때문인지, 특정 템플릿 때문인지, 혹은 특정 도메인 참조 때문인지 사후 분석이 가능하다.
+
+또한 negative prompt는 단순 미관 보정을 위한 장치가 아니라, 실제 실패 패턴을 억제하기 위해 설계되었다. 초기 실험에서는 만화풍 질감, watermark, 복수 세포 동시 출현, 과장된 색감, 비정상적 핵 변형, 흐릿한 경계가 반복적으로 나타났기 때문에, 이러한 실패 모드를 직접 negative prompt에 포함해 생성 공간을 제약했다. 그 결과 대규모 생성에서도 ``현미경 사진처럼 보이지만 세포학적으로는 틀린'' 샘플의 비율을 일정 수준 이하로 억제할 수 있었다.
+
+\subsection{합성 이미지 scoring과 subset builder}
+
+생성된 각 이미지는 즉시 quality scoring을 거쳤다. 각 synthetic image마다 (1) 5-class EfficientNet-B0가 예측한 클래스, (2) 해당 confidence, (3) Laplacian variance 기반 sharpness, (4) 참조 이미지와의 SSIM을 저장하였다. 이 과정의 목적은 단순한 이미지 저장이 아니라, 각 합성 이미지가 ``목표 클래스 형태를 유지하는가''와 ``얼마나 원본과 유사하거나 다른가''를 동시에 기록하는 것이었다. 여기서 scoring backbone은 4개 도메인 혼합 데이터로 학습된 \texttt{multidomain\_cnn}이었다.
+
+이 evaluator는 ImageNet-pretrained EfficientNet-B0를 4개 도메인 혼합 데이터에 대해 fine-tuning한 모델이다. 학습 시에는 domain$\times$class 조합별 불균형이 매우 컸기 때문에, 각 조합이 균등하게 보이도록 weighted sampling을 사용하였다. 또한 random crop, horizontal/vertical flip, color jitter, rotation, Gaussian blur, random erasing 등을 포함한 강한 augmentation과 label smoothing(0.1)을 적용하였다. 최종적으로 이 분류기는 생성 파이프라인 내부에서 synthetic sample quality proxy 역할을 수행하였다. 즉, 사람이 일일이 synthetic image를 판별하는 대신, 멀티도메인 분류기가 해당 이미지의 클래스 정체성 보존 여부를 근사적으로 측정하도록 한 것이다.
+
+중요한 점은 이 score를 ``절대적 진실''로 사용하지 않았다는 점이다. 예를 들어 SSIM이 높다고 해서 항상 좋은 샘플은 아니다. 너무 높은 SSIM은 원본을 거의 복사한 보수적 생성일 수도 있다. 반대로 confidence가 높더라도 배경 질감이 비현실적일 수 있다. 그래서 본 연구는 단일 지표로 합성 이미지를 자르지 않고, evaluator의 예측 결과와 confidence, 그리고 실험 목적에 맞는 클래스 필터를 조합하여 여러 서브셋 정책을 만들었다.
+
+이후 per-image report를 기반으로 여러 reusable manifest를 생성하였다. 이 단계의 목적은 합성 이미지를 전부 사용하는 것이 아니라, downstream utility가 높을 것으로 예상되는 이미지만 선별하는 것이었다. 본 논문에서 주요하게 사용한 subset은 다음과 같다.
+\begin{itemize}
+  \item \textbf{S2: CNN-correct} - evaluator가 target class로 정확히 분류한 이미지
+  \item \textbf{S3: High-confidence correct} - CNN-correct이면서 confidence threshold 이상인 이미지
+  \item \textbf{S7: Hard-classes only} - 어려운 클래스로 정의한 eosinophil과 monocyte 중심 subset
+  \item \textbf{S10: Monocyte only} - monocyte만 포함하는 class-targeted subset
+  \item \textbf{B2: Boundary-ranked} - low-margin, high cell-preservation, low background-similarity 조건을 동시에 만족하는 탐색적 subset
+\end{itemize}
+
+즉, 본 연구의 핵심은 생성 직후의 synthetic sample을 전부 사용하지 않고, 이미지별 utility proxy를 바탕으로 subset manifest를 만든 뒤 이를 downstream 학습에 투입하는 데 있다. 다시 말해, 생성 단계와 증강 단계는 분리되어 있으며, 후자는 ``무엇을 생성했는가''보다 ``무엇을 남겨서 학습에 넣을 것인가''에 초점을 둔다.
+
+\subsection{LODO 학습 및 selective augmentation 평가}
+
+도메인 일반화 평가는 LODO 설정으로 수행하였다. 각 실험에서 하나의 도메인을 완전히 hold-out test domain으로 두고, 나머지 3개 도메인의 real image만으로 baseline을 학습하였다. selective augmentation 실험에서는 여기에 하나의 synthetic subset manifest를 추가하였다. 중요한 점은 target leakage를 막기 위해 held-out domain에서 생성된 synthetic image는 자동으로 제외했다는 것이다. 따라서 예를 들어 AMC를 test domain으로 둘 경우, PBC, Raabin, MLL23에서 생성된 synthetic image만 학습에 추가되며 AMC 기반 synthetic image는 사용되지 않는다.
+
+이 설계는 논문 메시지에서 매우 중요하다. 만약 test domain에서 파생된 synthetic image를 훈련에 포함하면, 모델은 사실상 target domain의 색감과 배경 분포를 미리 본 것이 되므로 ``도메인 일반화''라고 부르기 어렵다. 본 연구는 이 누수를 막기 위해 각 held-out domain마다 synthetic manifest를 다시 필터링하고, 실제 훈련 시에는 남은 3개 도메인 출신 synthetic만 사용하였다. 즉, 본 결과는 target domain 스타일을 직접 본 synthetic adaptation이 아니라, source-domain synthetic augmentation이 unseen domain에 주는 간접 효과를 측정한 것이다.
+
+분류 backbone은 EfficientNet-B0를 사용하였다. baseline과 selective augmentation 모두 동일한 backbone과 동일한 평가 프로토콜 위에서 비교하여, 성능 차이가 모델 구조가 아니라 데이터 선택 정책에서 오도록 통제하였다. 실험 결과는 held-out domain 기준 accuracy와 macro-F1를 기본 지표로 기록했고, 추가로 per-class F1를 통해 weak class rescue 여부를 확인하였다. 특히 Raabin에서 monocyte, AMC와 PBC에서 eosinophil 및 basophil처럼 도메인별 취약 클래스가 존재했기 때문에, 최종 해석은 평균 정확도보다 class별 F1 변화에 더 큰 비중을 두었다.
+
+\subsection{Boundary-aware V2 탐색 분기}
+
+후속 탐색 단계에서는 ``쉽고 class-correct한 이미지''보다 ``세포는 유지하되 decision boundary에 가까운 이미지''를 만들기 위한 별도 분기를 구성하였다. 이를 위해 두 가지 설계를 추가하였다. 첫째, 공격적인 center crop 대신 더 넓은 배경 문맥을 남기는 contextual preprocessing branch를 만들고, 각 이미지에 대해 중심 세포를 근사하는 heuristic cell mask를 생성하였다. 둘째, 생성 단계는 전체 이미지를 동일하게 변형하는 일반 img2img 대신, 세포 영역의 역마스크를 이용해 배경을 먼저 강하게 inpaint한 뒤 필요한 경우에만 약한 전체 refinement를 수행하도록 바꾸었다.
+
+이 boundary-aware 분기에서는 평가 지표도 달리하였다. 기존 branch가 CNN correctness와 confidence를 주로 사용했다면, V2에서는 세포 영역 SSIM, 배경 영역 SSIM, entropy, target margin, near-boundary 여부를 함께 기록하였다. 특히 올바른 클래스로 분류되지만 margin이 작고, 세포 보존도는 높으면서 배경 유사도는 낮은 샘플을 ``boundary-aware positive''로 정의하였다. 실험적으로는 monocyte와 eosinophil을 우선 대상으로 삼았고, 배경 강도를 크게 높인 \texttt{bg=0.95}, \texttt{refine=0.0} 설정에서 low-margin monocyte 샘플을 실제로 확보할 수 있었다. 이후 이 샘플들은 \texttt{B2}와 같은 boundary-aware manifest로 정리되어, 기존 \texttt{S7}류 subset과 별도로 downstream utility를 탐색하는 데 사용되었다.
+
+\subsection{평가지표}
+
+본 논문의 생성 단계와 분류 단계는 서로 다른 목적의 지표를 사용하였다. 생성 단계에서는 CNN accuracy, CNN confidence, sharpness, SSIM을 이용해 synthetic image의 형태 보존도와 품질을 정량화하였다. 반면 최종 downstream 실험에서는 hold-out domain 기준 accuracy와 macro-F1를 주요 지표로 사용하였다. 의료영상 분류에서 class imbalance와 domain shift의 영향을 동시에 보기 위해, 최종 모델 비교는 accuracy보다 macro-F1를 중심으로 해석하였다.
+
+\section{결과}
+
+\subsection{LODO baseline은 충분히 어려운 평가 설정이다}
+
+real-only baseline의 평균 Macro-F1는 0.5826으로 측정되었다. 이는 기존의 쉬운 split보다 낮은 수치이며, LODO 설정이 실제 domain shift를 드러내는 적절한 benchmark임을 보여준다.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\linewidth]{../paper_figures/fig02_lodo_baseline_macro_f1.png}
+  \caption{Held-out domain별 LODO baseline Macro-F1.}
+  \label{fig:lodo-baseline-ko}
+\end{figure}
+
+\subsection{단일 synthetic policy는 모든 도메인에서 통하지 않는다}
+
+우선 domain-agnostic subset인 \texttt{S2}를 평가하였다. \texttt{S2}는 AMC와 Raabin에서는 성능을 향상시켰지만, PBC에서는 명확히 악화되었고 MLL23에서도 이득이 없었다. 따라서 하나의 ``깨끗한'' synthetic subset을 모든 도메인에 공통 적용하는 방식은 최적이 아니다.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{../paper_figures/fig03_subset_ablation_macro_f1.png}
+  \caption{Held-out domain별 subset ablation. 최적 subset은 도메인에 따라 달라진다.}
+  \label{fig:subset-ablation-ko}
+\end{figure}
+
+\subsection{최적 synthetic subset은 도메인 특이적이다}
+
+후속 실험 결과, AMC에서는 \texttt{S7}, PBC에서는 \texttt{S3}, Raabin에서는 refreshed \texttt{S7}, MLL23에서는 baseline이 최적이었다. 즉, 합성 데이터의 효과는 synthetic quantity보다 target domain과 subset policy의 조합에 더 크게 의존한다. 특히 Raabin에서는 초기 \texttt{S10} monocyte-only subset도 유의미한 rescue를 보였지만, 최종적으로는 monocyte와 eosinophil을 함께 포함한 refreshed \texttt{S7}가 더 높은 전체 Macro-F1를 달성하였다.
+
+\begin{table}[H]
+  \centering
+  \caption{Held-out domain별 최적 설정.}
+  \label{tab:best-by-domain-ko}
+  \begin{tabular}{lcccc}
+    \toprule
+    Held-out Domain & Best Setting & Accuracy & Macro-F1 & Baseline 대비 증가량 \\
+    \midrule
+    AMC & \texttt{S7\_hard\_classes\_only} & 0.8754 & 0.7231 & +0.1338 \\
+    PBC & \texttt{S3\_high\_conf\_correct} & 0.7168 & 0.6379 & +0.1980 \\
+    Raabin & refreshed \texttt{S7\_hard\_classes\_only} & 0.8994 & 0.7655 & +0.1982 \\
+    MLL23 & baseline & 0.7822 & 0.7340 & +0.0000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.78\linewidth]{../paper_figures/fig04_best_setting_by_domain.png}
+  \caption{Domain-best policy와 baseline 비교.}
+  \label{fig:best-by-domain-ko}
+\end{figure}
+
+\subsection{Hard-class-focused synthesis는 심각한 클래스 붕괴를 완화할 수 있다}
+
+가장 강한 rescue 효과는 Raabin과 AMC에서 관찰되었다. Raabin baseline에서 monocyte F1는 0.0303으로 사실상 붕괴 수준이었으나, refreshed \texttt{S7} 적용 시 0.7566까지 회복되었다. 동시에 eosinophil F1도 0.3899에서 0.6700으로 증가하였다. AMC에서는 baseline에서 eosinophil F1가 0.1834로 매우 낮았지만, \texttt{S7} 적용 시 0.8438까지 상승하였다. 즉, hard-class-focused synthetic augmentation은 단순한 평균 성능 향상뿐 아니라, 도메인별 취약 클래스 붕괴를 복구하는 역할을 했다.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{../paper_figures/fig05_raabin_per_class_rescue.png}
+  \caption{Raabin의 per-class F1 비교: baseline, \texttt{S2}, refreshed \texttt{S7}, \texttt{S10}.}
+  \label{fig:raabin-rescue-ko}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{../paper_figures/fig06_amc_pbc_best_per_class.png}
+  \caption{AMC와 PBC에서 최적 정책 적용 전후의 per-class F1 비교.}
+  \label{fig:amc-pbc-best-ko}
+\end{figure}
+
+\subsection{정성적 예시}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../diverse_generation/basophil/grid_AMC.png}
+    \caption{AMC basophil grid}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../diverse_generation/eosinophil/grid_AMC.png}
+    \caption{AMC eosinophil grid}
+  \end{subfigure}
+
+  \vspace{0.8em}
+
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../diverse_generation/eosinophil/grid_PBC.png}
+    \caption{PBC eosinophil grid}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../diverse_generation/monocyte/grid_Raabin.png}
+    \caption{Raabin monocyte grid}
+  \end{subfigure}
+  \caption{대규모 합성 파이프라인에서 얻은 대표적인 정성적 예시.}
+  \label{fig:qualitative-ko}
+\end{figure}
+
+\subsection{Boundary-aware 생성은 제어 가능한 변형을 만들었지만, downstream utility는 아직 불안정하다}
+
+boundary-aware V2 분기는 기존 branch보다 더 강한 배경 변형과 더 낮은 margin의 synthetic sample을 실제로 만들 수 있었다. 예를 들어 monocyte의 대규모 safe harvest에서는 $512$장의 생성 이미지에 대해 mean background SSIM 0.9018, region gap 0.0976, near-boundary rate 0.0215가 관찰되었다. 이 결과를 기반으로 low-margin, low-background-similarity 조건을 만족하는 boundary-aware subset을 선별한 결과, 총 18장의 eligible sample과 6장의 ranked sample이 확보되었다.
+
+그러나 downstream utility는 아직 mixed result였다. \texttt{B2} boundary-ranked subset은 1-epoch smoke test에서 AMC held-out에 대해 0.6845의 Macro-F1를 보여 baseline보다 일시적으로 높았지만, 5-epoch 재학습에서는 0.5894로 baseline 수준으로 되돌아갔다. Raabin에서는 \texttt{B2} 단독이 0.5014로 baseline보다도 낮았다. 또한 \texttt{S7}에 boundary-aware sample을 섞은 hybrid manifest(\texttt{H1}, \texttt{H2}, \texttt{H3})도 baseline보다는 높았으나, 최종 best인 refreshed \texttt{S7} 0.7655를 넘지 못했다. 따라서 본 논문의 주된 실증 결론은 여전히 domain-specific subset selection에 있으며, boundary-aware branch는 ``원하는 유형의 샘플 생성은 가능하지만 학습 유틸리티는 아직 불안정한'' 탐색적 결과로 해석하는 것이 적절하다.
+
+\section{논의}
+
+본 연구의 핵심 결과는 합성 의료영상 증강이 ``많이 생성하면 도움이 된다''는 단순한 가정을 따르지 않는다는 점이다. 동일한 생성 파이프라인과 동일한 synthetic corpus를 사용하더라도, 목표 도메인이 무엇인지와 어떤 subset selection policy를 적용하는지에 따라 성능은 향상되기도 하고, 거의 변하지 않기도 하며, 오히려 악화되기도 했다. 이는 합성 데이터가 본질적으로 bulk additive resource라기보다, 특정 실패 모드를 보정하기 위한 조건부 개입 수단이라는 해석을 지지한다.
+
+특히 본 연구는 합성 데이터의 효과를 논할 때 ``생성 품질''과 ``학습 유틸리티''를 구분해야 함을 보여준다. 시각적으로 그럴듯한 synthetic image가 반드시 downstream 분류에 유익한 것은 아니며, 반대로 다소 보수적으로 보이는 이미지라도 특정 취약 클래스를 보완하는 데는 충분히 유효할 수 있다. AMC와 Raabin에서 hard-class-focused subset이 가장 효과적이었던 결과, PBC에서 high-confidence subset이 가장 안정적이었던 결과는 모두 이러한 관점을 뒷받침한다. 즉, 합성 이미지는 보편적 자원이라기보다, 도메인별 오류 구조에 대응하는 정밀한 데이터 처방으로 해석하는 것이 더 적절하다.
+
+이 결과는 실무적으로도 직접적인 함의를 갖는다. 합성 데이터 증강을 적용할 때는 먼저 domain shift를 충분히 드러내는 벤치마크를 정의하고, 그다음 held-out domain에서 어떤 클래스가 붕괴하는지 확인하며, 마지막으로 그 약점에 맞는 subset policy를 선택해야 한다. 본 연구에서는 AMC와 Raabin은 hard-class-focused subset이 최적이었고, PBC는 high-confidence subset이 가장 안정적이었으며, MLL23은 baseline만으로도 충분히 높은 성능을 보여 추가 synthetic data의 이득이 거의 없었다. 따라서 합성 데이터 사용 여부 자체도 도메인별로 다시 판단해야 하며, ``합성은 항상 넣는 것''이 아니라 ``필요한 경우에만 선택적으로 투입하는 것''이 더 타당하다.
+
+또한 본 연구는 boundary-aware 생성에 대한 중요한 부정 결과도 함께 제시한다. 세포 중심부는 보존하고 배경만 더 강하게 변형하여 low-margin sample을 만드는 것은 기술적으로 가능했다. 실제로 monocyte에서는 18장의 eligible sample과 6장의 ranked sample을 확보했고, 일부 샘플은 target margin 0.05대까지 내려갔다. 그러나 이러한 샘플을 바로 학습에 투입했을 때는 기존 strong subset인 \texttt{S7}보다 안정적으로 우수한 결과를 보이지 못했다. 이는 ``결정경계에 가까운 샘플''이 이론적으로 매력적이더라도, 의료영상에서는 그 샘플의 수, class balance, 도메인 일관성까지 함께 맞춰야만 실제 이득으로 연결된다는 점을 시사한다.
+
+한편 본 연구에는 몇 가지 한계도 존재한다. 첫째, 생성 backbone과 분류 backbone의 종류를 광범위하게 바꾸어 비교하지는 않았으므로, 제안한 결론이 다른 생성기나 다른 분류기에서도 동일하게 유지되는지는 추가 검증이 필요하다. 둘째, synthetic utility를 판단하는 과정에서 CNN confidence와 correctness를 핵심 proxy로 사용했는데, 이는 사람 전문가의 형태학적 판독을 완전히 대체하는 지표는 아니다. 셋째, 본 연구는 5종 WBC 분류에 초점을 맞추었으므로, 보다 세분화된 혈액세포 taxonomy나 다른 의료영상 모달리티로 일반화하기 위해서는 추가 연구가 필요하다.
+
+그럼에도 불구하고 본 연구는 적어도 WBC 도메인 일반화 문제에서는 연구 질문의 초점을 ``생성량 확대''에서 ``유틸리티 인지형 선택''으로 이동시켜야 함을 명확히 보여준다. 동시에 boundary-aware branch는 향후 합성 의료영상 연구가 단순한 generation benchmark를 넘어, selection, weighting, curriculum, hard-negative mining, class-targeted intervention과 같은 데이터 사용 전략으로 확장되어야 함을 시사한다.
+
+\section{결론}
+
+합성 WBC 데이터 증강은 유틸리티 인지형이며 동시에 도메인 특이적으로 설계될 때 가장 효과적이다. 본 연구는 LODO 환경에서 단일 universal subset policy가 최적이 아님을 보였고, target-domain weakness가 synthetic subset selection을 결정해야 함을 실험적으로 확인하였다. 특히 refreshed \texttt{S7}와 같은 hard-class-focused subset은 AMC와 Raabin에서 강한 rescue 효과를 보였고, PBC에서는 \texttt{S3}와 같은 더 보수적인 filtering이 더 적합했다. 반면 boundary-aware branch는 원하는 형태의 low-margin synthetic sample을 생성할 수 있음을 보였지만, 아직 기존 strong subset을 안정적으로 능가하지는 못했다. 따라서 향후 합성 의료영상 연구의 핵심은 더 많은 이미지를 생성하는 것 자체보다, 어떤 synthetic sample을 어떤 도메인과 어떤 클래스 문제에 연결할 것인가를 체계적으로 설계하는 데 있다고 결론지을 수 있다.
+
+\end{document}
