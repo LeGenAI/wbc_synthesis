@@ -1,5 +1,5 @@
-# PRODUCTION CONFIG: use for paper-quality results.
-# Run with --seeds 42 123 456 for mean+/-std reporting.
+# PRODUCTION CONFIG: hard-class scarcity benchmark.
+# This simulates scarce supervision for the canonical hard classes.
 mode: real_only
 manifest_root: results/mainline/data
 heldout_domain: domain_b_raabin
@@ -19,4 +19,6 @@ synthetic_sampling_weight: 1.0
 leakage_filter: true
 lr_step_size: 10
 lr_gamma: 0.5
-class_fractions: {}
+class_fractions:
+  eosinophil: 0.25
+  monocyte: 0.25

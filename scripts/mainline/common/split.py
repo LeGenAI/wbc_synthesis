@@ -61,3 +61,34 @@ def stratified_fraction(
         n_keep = min(n_keep, len(bucket))
         selected.extend(bucket[:n_keep])
     return selected
+
+
+def stratified_class_fractions(
+    items: list[dict],
+    class_fractions: dict[str, float],
+    seed: int,
+    group_fields: tuple[str, ...] = ("class_name", "domain"),
+) -> list[dict]:
+    if not class_fractions:
+        return list(items)
+
+    buckets: dict[tuple, list[dict]] = defaultdict(list)
+    for item in items:
+        buckets[tuple(item[field] for field in group_fields)].append(item)
+
+    rng = random.Random(seed)
+    selected: list[dict] = []
+    for key, bucket_items in sorted(buckets.items()):
+        bucket = list(bucket_items)
+        rng.shuffle(bucket)
+        class_name = key[0]
+        fraction = float(class_fractions.get(class_name, 1.0))
+        if fraction <= 0.0 or fraction > 1.0:
+            raise ValueError(f"class fraction for {class_name} must be in (0, 1], got {fraction}")
+        if fraction >= 1.0:
+            selected.extend(bucket)
+            continue
+        n_keep = max(1, int(round(len(bucket) * fraction)))
+        n_keep = min(n_keep, len(bucket))
+        selected.extend(bucket[:n_keep])
+    return selected

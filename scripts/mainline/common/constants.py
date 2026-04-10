@@ -31,6 +31,11 @@ CLASSES = [
     "neutrophil",
 ]
 
+HARD_CLASSES = [
+    "eosinophil",
+    "monocyte",
+]
+
 CLASS_TO_IDX = {name: idx for idx, name in enumerate(CLASSES)}
 IDX_TO_CLASS = {idx: name for name, idx in CLASS_TO_IDX.items()}
 

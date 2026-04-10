@@ -31,7 +31,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.mainline.common.config import apply_overrides, dump_yaml_config, load_yaml_config
-from scripts.mainline.common.constants import CLASS_TO_IDX, CLASSES, DOMAIN_SHORT, DOMAINS
+from scripts.mainline.common.constants import CLASS_TO_IDX, CLASSES, DOMAIN_SHORT, DOMAINS, HARD_CLASSES
 from scripts.mainline.common.manifests import load_manifest_items
 from scripts.mainline.common.reporting import markdown_table, write_json, write_text
 from scripts.mainline.common.runtime import (
@@ -42,7 +42,7 @@ from scripts.mainline.common.runtime import (
     resolve_project_path,
     set_seed,
 )
-from scripts.mainline.common.split import stratified_fraction
+from scripts.mainline.common.split import stratified_class_fractions, stratified_fraction
 
 
 class ManifestDataset(Dataset):
@@ -76,6 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--synthetic-manifest", type=str, default=None)
     parser.add_argument("--train-fraction", type=float, default=None)
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--all-heldouts", action="store_true")
     parser.add_argument(
         "--seeds",
         type=int,
@@ -83,7 +84,28 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Run benchmark with multiple seeds for mean/std reporting.",
     )
+    parser.add_argument(
+        "--class-fraction",
+        action="append",
+        default=None,
+        help="Optional per-class train fraction override, e.g. monocyte=0.25",
+    )
     return parser.parse_args()
+
+
+def parse_cli_class_fractions(values: list[str] | None) -> dict[str, float] | None:
+    if not values:
+        return None
+    parsed: dict[str, float] = {}
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError(f"class-fraction must use CLASS=FRACTION, got: {raw}")
+        class_name, fraction_text = raw.split("=", 1)
+        class_name = class_name.strip()
+        if class_name not in CLASSES:
+            raise ValueError(f"Unknown class in class-fraction: {class_name}")
+        parsed[class_name] = float(fraction_text)
+    return parsed
 
 
 def validate_config(config: dict) -> dict:
@@ -97,6 +119,17 @@ def validate_config(config: dict) -> dict:
         raise ValueError(f"train_fraction must be in (0, 1], got {config['train_fraction']}")
     if config["mode"] == "real_plus_synth" and not config.get("synthetic_manifest"):
         raise ValueError("synthetic_manifest is required in real_plus_synth mode")
+    raw_class_fractions = config.get("class_fractions") or {}
+    if not isinstance(raw_class_fractions, dict):
+        raise ValueError("class_fractions must be a mapping of class_name -> fraction")
+    class_fractions = {}
+    for class_name, fraction in raw_class_fractions.items():
+        if class_name not in CLASSES:
+            raise ValueError(f"Unknown class in class_fractions: {class_name}")
+        fraction = float(fraction)
+        if not (0.0 < fraction <= 1.0):
+            raise ValueError(f"class fraction for {class_name} must be in (0, 1], got {fraction}")
+        class_fractions[class_name] = fraction
     return {
         **config,
         "epochs": int(config["epochs"]),
@@ -112,6 +145,8 @@ def validate_config(config: dict) -> dict:
         "leakage_filter": bool(config.get("leakage_filter", True)),
         "lr_step_size": int(config.get("lr_step_size", 10)),
         "lr_gamma": float(config.get("lr_gamma", 0.5)),
+        "class_fractions": class_fractions,
+        "all_heldouts": bool(config.get("all_heldouts", False)),
     }
 
 
@@ -327,6 +362,11 @@ def render_report_markdown(report: dict) -> str:
         f"- Held-out domain: `{report['heldout_domain']}`",
         f"- Device: `{report['device']}`",
         "",
+        "## Hard-class Setting",
+        "",
+        f"- hard_classes: `{report['hard_classes']}`",
+        f"- class_fractions: `{report['config'].get('class_fractions', {})}`",
+        "",
         "## Metrics",
         "",
         markdown_table(["Split", "Accuracy", "Macro-F1", "Loss"], metric_rows),
@@ -394,6 +434,12 @@ def build_run_name(config: dict) -> str:
         manifest_stem = Path(str(config["synthetic_manifest"])).stem
         manifest_stem = re.sub(r"[^A-Za-z0-9_-]+", "-", manifest_stem)
         parts.append(f"synth_{manifest_stem}")
+    if config.get("class_fractions"):
+        fraction_tag = "_".join(
+            f"{class_name[:4]}{str(value).replace('.', 'p')}"
+            for class_name, value in sorted(config["class_fractions"].items())
+        )
+        parts.append(f"cf_{fraction_tag}")
     return "__".join(parts)
 
 
@@ -455,6 +501,7 @@ def run_single_seed(config: dict) -> dict:
 
     train_items, val_items, test_items = load_split_manifests(manifest_root, config["heldout_domain"])
     train_items = stratified_fraction(train_items, config["train_fraction"], config["seed"])
+    train_items = stratified_class_fractions(train_items, config["class_fractions"], config["seed"])
 
     leakage_stats = {
         "excluded_for_heldout_domain": 0,
@@ -549,6 +596,7 @@ def run_single_seed(config: dict) -> dict:
         "backbone": config["backbone"],
         "heldout_domain": config["heldout_domain"],
         "device": str(device),
+        "hard_classes": HARD_CLASSES,
         "config": config,
         "history": history,
         "val": val_metrics,
@@ -571,6 +619,52 @@ def run_single_seed(config: dict) -> dict:
     update_summary(heldout_root)
     print(f"Wrote benchmark outputs to: {run_root}")
     return report
+
+
+def write_all_heldouts_summary(reports_by_domain: dict[str, list[dict]], output_root: Path, backbone: str) -> None:
+    rows = []
+    for heldout_domain, reports in sorted(reports_by_domain.items()):
+        test_f1s = [report["test"]["macro_f1"] for report in reports]
+        test_accs = [report["test"]["accuracy"] for report in reports]
+        rows.append(
+            {
+                "heldout_domain": heldout_domain,
+                "n_runs": len(reports),
+                "seeds": [report["config"]["seed"] for report in reports],
+                "test_macro_f1_mean": round(float(np.mean(test_f1s)), 4),
+                "test_macro_f1_std": round(float(np.std(test_f1s)), 4),
+                "test_accuracy_mean": round(float(np.mean(test_accs)), 4),
+                "test_accuracy_std": round(float(np.std(test_accs)), 4),
+            }
+        )
+
+    summary_root = ensure_dir(output_root / backbone)
+    write_json(summary_root / "all_heldouts_summary.json", {"runs": rows})
+    write_text(
+        summary_root / "all_heldouts_summary.md",
+        "\n".join(
+            [
+                "# All-heldouts Benchmark Summary",
+                "",
+                markdown_table(
+                    ["Heldout", "N Runs", "Seeds", "Test Acc Mean", "Test Acc Std", "Test Macro-F1 Mean", "Test Macro-F1 Std"],
+                    [
+                        [
+                            row["heldout_domain"],
+                            row["n_runs"],
+                            row["seeds"],
+                            row["test_accuracy_mean"],
+                            row["test_accuracy_std"],
+                            row["test_macro_f1_mean"],
+                            row["test_macro_f1_std"],
+                        ]
+                        for row in rows
+                    ],
+                ),
+                "",
+            ]
+        ),
+    )
 
 
 def aggregate_multi_seed(reports: list[dict], output_path: Path) -> None:
@@ -628,6 +722,7 @@ def main() -> None:
     args = parse_args()
     config_path = resolve_project_path(PROJECT_ROOT, args.config)
     config = load_yaml_config(config_path)
+    cli_class_fractions = parse_cli_class_fractions(args.class_fraction)
     config = apply_overrides(
         config,
         {
@@ -636,28 +731,45 @@ def main() -> None:
             "synthetic_manifest": args.synthetic_manifest,
             "train_fraction": args.train_fraction,
             "epochs": args.epochs,
+            "all_heldouts": True if args.all_heldouts else None,
+            "class_fractions": cli_class_fractions,
         },
     )
     config = validate_config(config)
 
     seeds = args.seeds or [config["seed"]]
+    heldout_domains = DOMAINS if config.get("all_heldouts") else [config["heldout_domain"]]
+    reports_by_domain: dict[str, list[dict]] = {}
 
-    if len(seeds) == 1:
-        config["seed"] = seeds[0]
-        run_single_seed(config)
-    else:
+    for heldout_domain in heldout_domains:
+        domain_config = {**config, "heldout_domain": heldout_domain}
+        if len(heldout_domains) > 1:
+            print(f"\n{'#' * 72}")
+            print(f"All-heldouts sweep: heldout={heldout_domain}")
+            print(f"{'#' * 72}")
+
+        if len(seeds) == 1:
+            domain_config["seed"] = seeds[0]
+            reports_by_domain[heldout_domain] = [run_single_seed(domain_config)]
+            continue
+
         reports = []
-        for seed in seeds:
+        for idx, seed in enumerate(seeds, start=1):
             print(f"\n{'='*60}")
-            print(f"Running seed {seed} ({seeds.index(seed)+1}/{len(seeds)})")
+            print(f"Running heldout={heldout_domain} seed {seed} ({idx}/{len(seeds)})")
             print(f"{'='*60}")
-            seed_config = {**config, "seed": seed}
+            seed_config = {**domain_config, "seed": seed}
             report = run_single_seed(seed_config)
             reports.append(report)
 
         output_root = ensure_dir(resolve_project_path(PROJECT_ROOT, config["output_root"]))
-        heldout_root = output_root / config["backbone"] / f"heldout_{config['heldout_domain']}"
+        heldout_root = output_root / config["backbone"] / f"heldout_{heldout_domain}"
         aggregate_multi_seed(reports, heldout_root)
+        reports_by_domain[heldout_domain] = reports
+
+    if len(heldout_domains) > 1:
+        output_root = ensure_dir(resolve_project_path(PROJECT_ROOT, config["output_root"]))
+        write_all_heldouts_summary(reports_by_domain, output_root, config["backbone"])
 
 
 if __name__ == "__main__":

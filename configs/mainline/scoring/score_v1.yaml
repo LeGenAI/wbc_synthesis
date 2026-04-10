@@ -9,3 +9,4 @@ backbone: efficientnet_b0
 image_size: 224
 conf_threshold: 0.7
 sharp_floor_pctile: 20
+enable_reference_diagnostics: true

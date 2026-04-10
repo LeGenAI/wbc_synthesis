@@ -1,6 +1,6 @@
-# PRODUCTION CONFIG: use for paper-quality results.
-# Run with --seeds 42 123 456 for mean+/-std reporting.
-mode: real_only
+# PRODUCTION CONFIG: hard-class scarcity benchmark with synthetic augmentation.
+# Set synthetic_manifest to a merged/filtered manifest before running.
+mode: real_plus_synth
 manifest_root: results/mainline/data
 heldout_domain: domain_b_raabin
 backbone: efficientnet_b0
@@ -15,8 +15,10 @@ num_workers: 4
 image_size: 224
 full_finetune: false
 synthetic_manifest: null
-synthetic_sampling_weight: 1.0
+synthetic_sampling_weight: 0.5
 leakage_filter: true
 lr_step_size: 10
 lr_gamma: 0.5
-class_fractions: {}
+class_fractions:
+  eosinophil: 0.25
+  monocyte: 0.25

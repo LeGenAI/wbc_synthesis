@@ -341,6 +341,8 @@ def main() -> None:
                         "policy_id": policy_spec["policy_id"],
                         "ref_image_id": ref_item["image_id"],
                         "ref_domain": ref_item["domain"],
+                        "ref_file_abs": ref_item["file_abs"],
+                        "ref_file_rel": ref_item.get("file_rel"),
                         "target_domain": target_domain,
                         "strength": strength,
                         "seed": seed,

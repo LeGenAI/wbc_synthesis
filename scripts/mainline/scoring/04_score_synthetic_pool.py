@@ -49,7 +49,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.mainline.common.config import apply_overrides, dump_yaml_config, load_yaml_config
-from scripts.mainline.common.constants import CLASS_TO_IDX, CLASSES
+from scripts.mainline.common.constants import CLASS_TO_IDX, CLASSES, HARD_CLASSES
+from scripts.mainline.common.diagnostics import compute_reference_diagnostics
 from scripts.mainline.common.manifests import (
     load_manifest_items,
     write_manifest_payload,
@@ -80,6 +81,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--conf-threshold", type=float, default=None)
     parser.add_argument("--sharp-floor-pctile", type=float, default=None)
     parser.add_argument("--backbone", type=str, default=None)
+    parser.add_argument("--disable-reference-diagnostics", action="store_true")
     return parser.parse_args()
 
 
@@ -97,6 +99,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "conf_threshold": args.conf_threshold,
         "sharp_floor_pctile": args.sharp_floor_pctile,
         "backbone": args.backbone,
+        "enable_reference_diagnostics": False if args.disable_reference_diagnostics else None,
     })
 
     # Defaults
@@ -104,6 +107,7 @@ def build_config(args: argparse.Namespace) -> dict:
     config.setdefault("sharp_floor_pctile", 20)
     config.setdefault("backbone", "efficientnet_b0")
     config.setdefault("image_size", 224)
+    config.setdefault("enable_reference_diagnostics", True)
 
     required = ["synthetic_manifest", "classifier_ckpt", "real_manifest", "output_root"]
     missing = [k for k in required if not config.get(k)]
@@ -115,6 +119,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "conf_threshold": float(config["conf_threshold"]),
         "sharp_floor_pctile": float(config["sharp_floor_pctile"]),
         "image_size": int(config["image_size"]),
+        "enable_reference_diagnostics": bool(config["enable_reference_diagnostics"]),
     }
 
 
@@ -137,6 +142,7 @@ def score_synthetic_items(
     model: torch.nn.Module,
     device: torch.device,
     image_size: int,
+    enable_reference_diagnostics: bool,
 ) -> list[dict]:
     transform = transforms.Compose([
         transforms.Resize((image_size, image_size)),
@@ -170,9 +176,58 @@ def score_synthetic_items(
             scored_item["score_predicted_class"] = CLASSES[predicted_idx] if predicted_idx < len(CLASSES) else "unknown"
             scored_item["score_class_correct"] = class_correct
             scored_item["score_sharpness"] = round(sharpness, 2)
+
+            if enable_reference_diagnostics:
+                ref_path = item.get("ref_file_abs")
+                if ref_path and Path(ref_path).exists():
+                    ref_image = Image.open(ref_path).convert("RGB")
+                    diagnostics = compute_reference_diagnostics(ref_image, image)
+                    scored_item["score_ssim"] = diagnostics["ssim"]
+                    scored_item["score_cell_ssim"] = diagnostics["cell_ssim"]
+                    scored_item["score_background_ssim"] = diagnostics["background_ssim"]
+                    scored_item["score_region_gap"] = diagnostics["region_gap"]
             scored.append(scored_item)
 
     return scored
+
+
+def summarize_reference_diagnostics(scored_items: list[dict]) -> dict:
+    diagnostic_items = [item for item in scored_items if "score_ssim" in item]
+    if not diagnostic_items:
+        return {
+            "n_with_reference_diagnostics": 0,
+            "hard_classes": HARD_CLASSES,
+            "overall": None,
+            "per_class": {},
+        }
+
+    def mean_metric(items: list[dict], key: str) -> float:
+        return round(float(np.mean([item[key] for item in items])), 4)
+
+    per_class = {}
+    for class_name in CLASSES:
+        class_items = [item for item in diagnostic_items if item["class_name"] == class_name]
+        if not class_items:
+            continue
+        per_class[class_name] = {
+            "n": len(class_items),
+            "ssim_mean": mean_metric(class_items, "score_ssim"),
+            "cell_ssim_mean": mean_metric(class_items, "score_cell_ssim"),
+            "background_ssim_mean": mean_metric(class_items, "score_background_ssim"),
+            "region_gap_mean": mean_metric(class_items, "score_region_gap"),
+        }
+
+    return {
+        "n_with_reference_diagnostics": len(diagnostic_items),
+        "hard_classes": HARD_CLASSES,
+        "overall": {
+            "ssim_mean": mean_metric(diagnostic_items, "score_ssim"),
+            "cell_ssim_mean": mean_metric(diagnostic_items, "score_cell_ssim"),
+            "background_ssim_mean": mean_metric(diagnostic_items, "score_background_ssim"),
+            "region_gap_mean": mean_metric(diagnostic_items, "score_region_gap"),
+        },
+        "per_class": per_class,
+    }
 
 
 def apply_quality_gate(
@@ -210,12 +265,31 @@ def apply_quality_gate(
     return passed, stats
 
 
-def render_report(config: dict, gate_stats: dict, scored_items: list[dict], filtered_items: list[dict]) -> str:
+def render_report(
+    config: dict,
+    gate_stats: dict,
+    diagnostic_summary: dict,
+    scored_items: list[dict],
+    filtered_items: list[dict],
+) -> str:
     scored_counter = Counter((item["class_name"], item.get("domain", "?")) for item in scored_items)
     filtered_counter = Counter((item["class_name"], item.get("domain", "?")) for item in filtered_items)
 
     scored_rows = [[cls, dom, cnt] for (cls, dom), cnt in sorted(scored_counter.items())]
     filtered_rows = [[cls, dom, cnt] for (cls, dom), cnt in sorted(filtered_counter.items())]
+    diagnostic_rows = []
+    for class_name, values in diagnostic_summary["per_class"].items():
+        diagnostic_rows.append(
+            [
+                class_name,
+                values["n"],
+                values["ssim_mean"],
+                values["cell_ssim_mean"],
+                values["background_ssim_mean"],
+                values["region_gap_mean"],
+                "yes" if class_name in HARD_CLASSES else "no",
+            ]
+        )
 
     lines = [
         "# Synthetic Pool Scoring Report",
@@ -227,6 +301,7 @@ def render_report(config: dict, gate_stats: dict, scored_items: list[dict], filt
         f"- Confidence threshold: `{config['conf_threshold']}`",
         f"- Sharpness floor percentile: `{config['sharp_floor_pctile']}`",
         f"- Computed sharpness floor: `{gate_stats['sharpness_floor']}`",
+        f"- Reference diagnostics enabled: `{config['enable_reference_diagnostics']}`",
         "",
         "## Gate Results",
         "",
@@ -237,6 +312,35 @@ def render_report(config: dict, gate_stats: dict, scored_items: list[dict], filt
         f"- Rejected (both): `{gate_stats['rejected_both']}`",
         f"- Pass rate: `{gate_stats['pass_rate']}`",
         "",
+        "## Generation Diagnostics",
+        "",
+    ]
+    if diagnostic_summary["overall"] is None:
+        lines.extend(
+            [
+                "- No reference-linked diagnostics were available in this manifest.",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"- N with diagnostics: `{diagnostic_summary['n_with_reference_diagnostics']}`",
+                f"- Hard classes: `{diagnostic_summary['hard_classes']}`",
+                f"- Overall SSIM mean: `{diagnostic_summary['overall']['ssim_mean']}`",
+                f"- Overall cell SSIM mean: `{diagnostic_summary['overall']['cell_ssim_mean']}`",
+                f"- Overall background SSIM mean: `{diagnostic_summary['overall']['background_ssim_mean']}`",
+                f"- Overall region gap mean: `{diagnostic_summary['overall']['region_gap_mean']}`",
+                "",
+                markdown_table(
+                    ["Class", "N", "SSIM", "Cell SSIM", "Background SSIM", "Region Gap", "Hard Class"],
+                    diagnostic_rows,
+                ),
+                "",
+            ]
+        )
+    lines.extend(
+        [
         "## Scored Items by Class/Domain",
         "",
         markdown_table(["Class", "Domain", "Count"], scored_rows),
@@ -245,7 +349,8 @@ def render_report(config: dict, gate_stats: dict, scored_items: list[dict], filt
         "",
         markdown_table(["Class", "Domain", "Count"], filtered_rows),
         "",
-    ]
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -279,7 +384,14 @@ def main() -> None:
 
     # Score synthetic items
     synth_items = load_manifest_items(synth_manifest_path)
-    scored_items = score_synthetic_items(synth_items, model, device, config["image_size"])
+    scored_items = score_synthetic_items(
+        synth_items,
+        model,
+        device,
+        config["image_size"],
+        config["enable_reference_diagnostics"],
+    )
+    diagnostic_summary = summarize_reference_diagnostics(scored_items)
 
     # Apply quality gate
     filtered_items, gate_stats = apply_quality_gate(
@@ -291,14 +403,26 @@ def main() -> None:
     # Write outputs
     write_json(
         output_root / "scored_manifest.json",
-        write_manifest_payload("scored_synthetic_pool", scored_items, {"gate_stats": gate_stats}),
+        write_manifest_payload(
+            "scored_synthetic_pool",
+            scored_items,
+            {"gate_stats": gate_stats, "diagnostic_summary": diagnostic_summary},
+        ),
     )
     write_json(
         output_root / "filtered_manifest.json",
-        write_manifest_payload("filtered_synthetic_pool", filtered_items, {"gate_stats": gate_stats}),
+        write_manifest_payload(
+            "filtered_synthetic_pool",
+            filtered_items,
+            {"gate_stats": gate_stats, "diagnostic_summary": diagnostic_summary},
+        ),
     )
     write_json(output_root / "gate_stats.json", gate_stats)
-    write_text(output_root / "report.md", render_report(config, gate_stats, scored_items, filtered_items))
+    write_json(output_root / "diagnostic_summary.json", diagnostic_summary)
+    write_text(
+        output_root / "report.md",
+        render_report(config, gate_stats, diagnostic_summary, scored_items, filtered_items),
+    )
     if args.config:
         dump_yaml_config(output_root / "resolved_config.yaml", config)
     print(f"Scored {len(scored_items)} items, {len(filtered_items)} passed quality gate ({gate_stats['pass_rate']:.1%})")

@@ -19,3 +19,4 @@ synthetic_sampling_weight: 0.5
 leakage_filter: true
 lr_step_size: 10
 lr_gamma: 0.5
+class_fractions: {}

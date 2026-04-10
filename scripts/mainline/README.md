@@ -11,9 +11,9 @@ This directory contains the canonical research pipeline aligned to the paper sup
 3. `generation/03_generate_synthetic_pool.py`
    Generate a synthetic pool from a frozen policy (per class).
 4. `scoring/04_score_synthetic_pool.py`
-   Two-stage quality gate: classifier confidence + sharpness floor.
+   Two-stage quality gate plus reference-linked diagnostics (`ssim`, `cell_ssim`, `background_ssim`, `region_gap`).
 5. `benchmark/05_train_lodo_utility_benchmark.py`
-   Leakage-safe LODO utility benchmark with multi-seed support.
+   Leakage-safe LODO utility benchmark with multi-seed, hard-class scarcity, and all-heldouts sweep support.
 6. `reporting/06_make_submission_package.py`
    Figures, tables, appendix, and supplementary artifact assembly.
 
@@ -61,6 +61,17 @@ python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
     --config configs/mainline/benchmark/real_only_production.yaml \
     --seeds 42 123 456
 
+# Stage 05: hard-class scarcity benchmark
+python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
+    --config configs/mainline/benchmark/real_only_hardclass_production.yaml \
+    --seeds 42 123 456
+
+# Stage 05: all-heldouts sweep
+python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
+    --config configs/mainline/benchmark/real_only_production.yaml \
+    --all-heldouts \
+    --seeds 42 123 456
+
 # Stage 05: benchmark (real + filtered synth)
 python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
     --config configs/mainline/benchmark/real_plus_synth_production.yaml \
@@ -78,7 +89,9 @@ python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
 - New experiments follow the stage numbering above, not the legacy numbering.
 - Stages 02 and 03 produce per-class artifacts; the merge step combines them.
 - Stage 04 sits between generation and benchmarking as a quality gate.
+- Stage 04 also emits generation-side diagnostics from reference-linked provenance.
 - Novelty claims must be checked against `references/reference_matrix.md`.
 - Canonical baseline backbone: `efficientnet_b0`. VGG16 is a robustness axis.
 - Stage 02 produces `policy_spec.json`; stage 03 produces `synthetic_manifest.json`.
 - Multi-seed runs (--seeds) are required for paper reporting.
+- `HARD_CLASSES = [eosinophil, monocyte]` is the canonical scarce-class setting for auxiliary robustness studies.
