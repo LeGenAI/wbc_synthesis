@@ -63,6 +63,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="efficientnet_b0",
     )
+    parser.add_argument(
+        "--fill-tex",
+        type=str,
+        default=None,
+        help="Path to main.tex with %%PLACEHOLDER%% tokens to fill with real numbers.",
+    )
     return parser.parse_args()
 
 
@@ -329,6 +335,91 @@ def collect_confusion_matrices(reports: list[dict], output_dir: Path) -> list[st
 
 
 # ---------------------------------------------------------------------------
+# Placeholder fill for main.tex
+# ---------------------------------------------------------------------------
+
+def build_placeholder_map(reports: list[dict]) -> dict[str, str]:
+    """Build a map of %%PLACEHOLDER%% -> value from collected reports.
+
+    Supported placeholders (all case-insensitive):
+      %%BASELINE_MACRO_F1_AVG%%        mean across domains for real_only tf=1.0
+      %%BASELINE_MACRO_F1_<DOMAIN>%%   per-domain real_only baseline
+      %%BEST_MACRO_F1_<DOMAIN>%%       best macro-F1 for each heldout domain
+      %%BEST_RUN_<DOMAIN>%%            run name of the best for each domain
+      %%HARDCLASS_<CLASS>_F1_<DOMAIN>%%  per hard-class F1 at best run
+      %%N_TOTAL_IMAGES%%               total images in generation pool
+    """
+    placeholders: dict[str, str] = {}
+    by_heldout = group_by_heldout(reports)
+
+    # Find baseline (real_only, tf=1.0, standard augment, no TTA)
+    baseline_f1s = {}
+    for domain in DOMAINS:
+        domain_reps = by_heldout.get(domain, [])
+        baseline_reps = [
+            r for r in domain_reps
+            if r.get("config", {}).get("mode") == "real_only"
+            and abs(float(r.get("config", {}).get("train_fraction", 0)) - 1.0) < 0.01
+            and r.get("config", {}).get("train_augment_mode", "standard") == "standard"
+            and r.get("config", {}).get("eval_tta_mode", "none") == "none"
+            and not r.get("config", {}).get("class_fractions")
+        ]
+        if baseline_reps:
+            f1s = [r["test"]["macro_f1"] for r in baseline_reps]
+            m = float(np.mean(f1s))
+            baseline_f1s[domain] = m
+            short = DOMAIN_SHORT[domain].upper()
+            placeholders[f"%%BASELINE_MACRO_F1_{short}%%"] = f"{m:.4f}"
+
+    if baseline_f1s:
+        avg = float(np.mean(list(baseline_f1s.values())))
+        placeholders["%%BASELINE_MACRO_F1_AVG%%"] = f"{avg:.4f}"
+
+    # Best per domain
+    for domain in DOMAINS:
+        domain_reps = by_heldout.get(domain, [])
+        if not domain_reps:
+            continue
+        best = max(domain_reps, key=lambda r: r["test"]["macro_f1"])
+        short = DOMAIN_SHORT[domain].upper()
+        placeholders[f"%%BEST_MACRO_F1_{short}%%"] = f"{best['test']['macro_f1']:.4f}"
+        placeholders[f"%%BEST_ACC_{short}%%"] = f"{best['test']['accuracy']:.4f}"
+        placeholders[f"%%BEST_RUN_{short}%%"] = best["run_name"]
+
+        # Hard-class F1 at best run
+        for cls in HARD_CLASSES:
+            pc = best["test"]["per_class"].get(cls, {})
+            cls_upper = cls.upper()
+            placeholders[f"%%HARDCLASS_{cls_upper}_F1_{short}%%"] = f"{pc.get('f1', 0):.4f}"
+            placeholders[f"%%HARDCLASS_{cls_upper}_RECALL_{short}%%"] = f"{pc.get('recall', 0):.4f}"
+
+    return placeholders
+
+
+def fill_tex_placeholders(tex_path: Path, placeholders: dict[str, str], output_path: Path) -> int:
+    """Replace %%PLACEHOLDER%% tokens in a .tex file. Returns count of replacements."""
+    with open(tex_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    count = 0
+    for token, value in placeholders.items():
+        if token in content:
+            content = content.replace(token, value)
+            count += 1
+
+    # Find unfilled placeholders
+    import re
+    unfilled = re.findall(r"%%[A-Z_]+%%", content)
+    if unfilled:
+        print(f"  WARNING: {len(unfilled)} unfilled placeholders remain: {unfilled[:5]}")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -381,6 +472,20 @@ def main() -> None:
     summary_md = build_markdown_summary(reports, data_summary)
     write_text(output_root / "submission_summary.md", summary_md)
 
+    # Fill tex placeholders
+    placeholders = build_placeholder_map(reports)
+    write_json(output_root / "placeholders.json", placeholders)
+    print(f"Built {len(placeholders)} placeholder values")
+
+    if args.fill_tex:
+        tex_path = resolve_project_path(PROJECT_ROOT, args.fill_tex)
+        if tex_path.exists():
+            filled_path = output_root / "main_filled.tex"
+            n_filled = fill_tex_placeholders(tex_path, placeholders, filled_path)
+            print(f"Filled {n_filled} placeholders -> {filled_path}")
+        else:
+            print(f"WARNING: --fill-tex path not found: {tex_path}")
+
     # Metadata
     write_json(output_root / "package_metadata.json", {
         "n_reports": len(reports),
@@ -390,6 +495,7 @@ def main() -> None:
         "hard_classes": HARD_CLASSES,
         "tables": sorted(str(p.name) for p in tables_dir.iterdir()),
         "figures": sorted(cm_files),
+        "n_placeholders": len(placeholders),
     })
 
     print(f"Wrote submission package to: {output_root}")

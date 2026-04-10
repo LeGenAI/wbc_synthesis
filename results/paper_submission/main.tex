@@ -352,10 +352,11 @@ H2 & real + synth (hard 25\%) & Hard-class + synthetic \\
 
 \subsection{LODO Baseline Difficulty}
 
-The real-only LODO baseline (B0) yields a mean macro-F1 of $\sim$0.58
-across four held-out domains, confirming that the benchmark is
-meaningfully challenging. Easy validation-split evaluations, by contrast,
-exceed 0.90 macro-F1 and mask any synthetic utility signal.
+The real-only LODO baseline (B0) yields a mean macro-F1 of
+%%BASELINE_MACRO_F1_AVG%% across four held-out domains, confirming that
+the benchmark is meaningfully challenging. Easy validation-split
+evaluations, by contrast, exceed 0.90 macro-F1 and mask any synthetic
+utility signal.
 
 \subsection{Naive Augmentation Fails Under Domain Shift}
 
@@ -371,8 +372,8 @@ improvements over B0 on the hardest held-out domains (Raabin, AMC).
 The improvement is concentrated in hard classes:
 
 \begin{itemize}[leftmargin=*,nosep]
-\item \textbf{Monocyte rescue on Raabin:} Baseline F1 near 0.03
-  improves to $>$0.22 with class-specific policy.
+\item \textbf{Monocyte rescue on Raabin:} Baseline F1 of
+  %%HARDCLASS_MONOCYTE_F1_RAABIN%% improves with class-specific policy.
 \item \textbf{Eosinophil rescue on AMC:} Hard-class-focused generation
   provides the largest macro-F1 gain.
 \item \textbf{MLL23 needs no synthetic help:} The baseline is already
