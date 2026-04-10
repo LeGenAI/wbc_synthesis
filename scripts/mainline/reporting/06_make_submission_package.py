@@ -1,20 +1,398 @@
 #!/usr/bin/env python3
 """
-Scaffold for the mainline supplementary stage 06.
+Stage 06: assemble paper tables, figures, and supplementary artifacts
+from benchmark results.
 
-Purpose:
-- assemble paper figures, tables, appendix artifacts, and run summaries
-- keep manuscript-facing outputs separate from exploratory notebooks and ad hoc reports
+Reads report.json files from results/mainline/benchmark/ and produces:
+  - LaTeX tables for the experiment grid (main paper Table 1)
+  - Per-class F1 breakdown tables
+  - Hard-class rescue comparison
+  - Low-data utility comparison
+  - Dataset statistics table
+  - Summary markdown for quick inspection
+
+Usage:
+    python -m scripts.mainline.reporting.06_make_submission_package \
+        --benchmark-root results/mainline/benchmark \
+        --data-summary results/mainline/data/dataset_summary.json \
+        --output-root results/mainline/reporting
 """
 
-import argparse
+from __future__ import annotations
 
+import argparse
+import json
+import re
+import shutil
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.mainline.common.constants import CLASSES, DOMAINS, DOMAIN_LABELS, DOMAIN_SHORT, HARD_CLASSES
+from scripts.mainline.common.reporting import markdown_table, write_json, write_text
+from scripts.mainline.common.runtime import ensure_dir, resolve_project_path
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Assemble paper submission artifacts from benchmark results.",
+    )
+    parser.add_argument(
+        "--benchmark-root",
+        type=str,
+        default="results/mainline/benchmark",
+    )
+    parser.add_argument(
+        "--data-summary",
+        type=str,
+        default="results/mainline/data/dataset_summary.json",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=str,
+        default="results/mainline/reporting",
+    )
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default="efficientnet_b0",
+    )
+    return parser.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Collectors
+# ---------------------------------------------------------------------------
+
+def collect_reports(benchmark_root: Path, backbone: str) -> list[dict]:
+    """Recursively collect all report.json files under benchmark_root/backbone/."""
+    reports = []
+    backbone_root = benchmark_root / backbone
+    if not backbone_root.exists():
+        return reports
+    for report_path in sorted(backbone_root.rglob("report.json")):
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        report["_report_path"] = str(report_path)
+        reports.append(report)
+    return reports
+
+
+def group_by_heldout(reports: list[dict]) -> dict[str, list[dict]]:
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for r in reports:
+        groups[r["heldout_domain"]].append(r)
+    return dict(groups)
+
+
+def group_by_config_key(reports: list[dict]) -> dict[str, list[dict]]:
+    """Group reports by a canonical config key (mode + augment + tta + fractions)."""
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for r in reports:
+        cfg = r.get("config", {})
+        key_parts = [
+            cfg.get("mode", "?"),
+            f"tf{cfg.get('train_fraction', 1.0)}",
+            f"aug_{cfg.get('train_augment_mode', 'standard')}",
+            f"tta_{cfg.get('eval_tta_mode', 'none')}",
+        ]
+        cf = cfg.get("class_fractions", {})
+        if cf:
+            cf_tag = "_".join(f"{k[:4]}{v}" for k, v in sorted(cf.items()))
+            key_parts.append(f"cf_{cf_tag}")
+        key = "__".join(key_parts)
+        groups[key].append(r)
+    return dict(groups)
+
+
+def mean_std(values: list[float]) -> tuple[float, float]:
+    if not values:
+        return 0.0, 0.0
+    return float(np.mean(values)), float(np.std(values))
+
+
+# ---------------------------------------------------------------------------
+# LaTeX generators
+# ---------------------------------------------------------------------------
+
+def latex_table_experiment_grid(
+    reports: list[dict],
+) -> str:
+    """Generate LaTeX table: rows = config key, columns = heldout domains."""
+    by_config = group_by_config_key(reports)
+    domain_shorts = [DOMAIN_SHORT[d] for d in DOMAINS]
+
+    header = (
+        "\\begin{table*}[t]\n"
+        "\\centering\n"
+        "\\small\n"
+        "\\caption{LODO macro-F1 by held-out domain (mean $\\pm$ std over 3 seeds).}\n"
+        "\\label{tab:main-results}\n"
+        "\\begin{tabular}{l" + "c" * len(DOMAINS) + "c}\n"
+        "\\toprule\n"
+        "Configuration & " + " & ".join(domain_shorts) + " & Avg \\\\\n"
+        "\\midrule\n"
+    )
+
+    rows = []
+    for config_key in sorted(by_config.keys()):
+        config_reports = by_config[config_key]
+        by_heldout = group_by_heldout(config_reports)
+        cells = []
+        domain_means = []
+        for domain in DOMAINS:
+            domain_reports = by_heldout.get(domain, [])
+            f1s = [r["test"]["macro_f1"] for r in domain_reports]
+            m, s = mean_std(f1s)
+            domain_means.append(m)
+            if len(f1s) >= 2:
+                cells.append(f"{m:.3f}$\\pm${s:.3f}")
+            elif len(f1s) == 1:
+                cells.append(f"{m:.3f}")
+            else:
+                cells.append("--")
+        avg_m = float(np.mean(domain_means)) if domain_means else 0.0
+        cells.append(f"{avg_m:.3f}")
+
+        label = config_key.replace("__", " / ").replace("_", "\\_")
+        rows.append(f"  {label} & " + " & ".join(cells) + " \\\\")
+
+    footer = (
+        "\\bottomrule\n"
+        "\\end{tabular}\n"
+        "\\end{table*}\n"
+    )
+
+    return header + "\n".join(rows) + "\n" + footer
+
+
+def latex_table_per_class(
+    reports: list[dict],
+    heldout_domain: str,
+) -> str:
+    """Generate per-class F1 table for a specific held-out domain."""
+    by_config = group_by_config_key(reports)
+    domain_reports_map: dict[str, list[dict]] = {}
+    for key, reps in by_config.items():
+        domain_reps = [r for r in reps if r["heldout_domain"] == heldout_domain]
+        if domain_reps:
+            domain_reports_map[key] = domain_reps
+
+    if not domain_reports_map:
+        return f"% No reports for heldout={heldout_domain}\n"
+
+    header = (
+        "\\begin{table}[t]\n"
+        "\\centering\n"
+        "\\small\n"
+        f"\\caption{{Per-class test F1 (heldout={DOMAIN_SHORT[heldout_domain]}).}}\n"
+        f"\\label{{tab:perclass-{DOMAIN_SHORT[heldout_domain]}}}\n"
+        "\\begin{tabular}{l" + "c" * len(CLASSES) + "c}\n"
+        "\\toprule\n"
+        "Config & " + " & ".join(c[:4] for c in CLASSES) + " & Macro \\\\\n"
+        "\\midrule\n"
+    )
+
+    rows = []
+    for config_key in sorted(domain_reports_map.keys()):
+        reps = domain_reports_map[config_key]
+        cells = []
+        for cls in CLASSES:
+            f1s = [r["test"]["per_class"][cls]["f1"] for r in reps]
+            m, _ = mean_std(f1s)
+            cells.append(f"{m:.3f}")
+        macro_f1s = [r["test"]["macro_f1"] for r in reps]
+        m, _ = mean_std(macro_f1s)
+        cells.append(f"{m:.3f}")
+        label = config_key.replace("__", " / ").replace("_", "\\_")
+        rows.append(f"  {label} & " + " & ".join(cells) + " \\\\")
+
+    footer = (
+        "\\bottomrule\n"
+        "\\end{tabular}\n"
+        "\\end{table}\n"
+    )
+    return header + "\n".join(rows) + "\n" + footer
+
+
+def latex_table_dataset_stats(data_summary: dict) -> str:
+    """Generate dataset statistics table from data_summary.json."""
+    rows = []
+    for domain in DOMAINS:
+        class_counts = data_summary["inventory_by_domain_class"].get(domain, {})
+        total = sum(class_counts.values())
+        cells = [DOMAIN_LABELS.get(domain, domain)]
+        for cls in CLASSES:
+            cells.append(str(class_counts.get(cls, 0)))
+        cells.append(str(total))
+        rows.append("  " + " & ".join(cells) + " \\\\")
+
+    header = (
+        "\\begin{table}[t]\n"
+        "\\centering\n"
+        "\\small\n"
+        "\\caption{Dataset statistics: images per domain and class.}\n"
+        "\\label{tab:dataset-stats}\n"
+        "\\begin{tabular}{l" + "c" * len(CLASSES) + "c}\n"
+        "\\toprule\n"
+        "Domain & " + " & ".join(c[:4] for c in CLASSES) + " & Total \\\\\n"
+        "\\midrule\n"
+    )
+    footer = (
+        "\\bottomrule\n"
+        "\\end{tabular}\n"
+        "\\end{table}\n"
+    )
+    return header + "\n".join(rows) + "\n" + footer
+
+
+# ---------------------------------------------------------------------------
+# Markdown summary
+# ---------------------------------------------------------------------------
+
+def build_markdown_summary(reports: list[dict], data_summary: dict | None) -> str:
+    lines = ["# Submission Package Summary", ""]
+
+    if data_summary:
+        lines.append(f"- Total images: `{data_summary['inventory_count']}`")
+        lines.append(f"- Domains: `{data_summary.get('domains', DOMAINS)}`")
+        lines.append(f"- Classes: `{CLASSES}`")
+        lines.append("")
+
+    lines.append(f"- Total benchmark reports collected: `{len(reports)}`")
+    by_heldout = group_by_heldout(reports)
+    for domain in DOMAINS:
+        domain_reps = by_heldout.get(domain, [])
+        lines.append(f"- {DOMAIN_SHORT[domain]}: `{len(domain_reps)}` runs")
+    lines.append("")
+
+    # Best per domain
+    lines.append("## Best Macro-F1 by Held-out Domain")
+    lines.append("")
+    best_rows = []
+    for domain in DOMAINS:
+        domain_reps = by_heldout.get(domain, [])
+        if not domain_reps:
+            best_rows.append([DOMAIN_SHORT[domain], "--", "--", "--"])
+            continue
+        best = max(domain_reps, key=lambda r: r["test"]["macro_f1"])
+        best_rows.append([
+            DOMAIN_SHORT[domain],
+            best["run_name"],
+            f"{best['test']['macro_f1']:.4f}",
+            f"{best['test']['accuracy']:.4f}",
+        ])
+    lines.append(markdown_table(["Heldout", "Best Run", "Macro-F1", "Accuracy"], best_rows))
+    lines.append("")
+
+    # Hard-class summary
+    lines.append("## Hard-class F1 Summary")
+    lines.append("")
+    for domain in DOMAINS:
+        domain_reps = by_heldout.get(domain, [])
+        if not domain_reps:
+            continue
+        best = max(domain_reps, key=lambda r: r["test"]["macro_f1"])
+        hc_rows = []
+        for cls in HARD_CLASSES:
+            pc = best["test"]["per_class"].get(cls, {})
+            hc_rows.append([cls, f"{pc.get('f1', 0):.4f}", f"{pc.get('recall', 0):.4f}", pc.get("support", 0)])
+        lines.append(f"### {DOMAIN_SHORT[domain]} (best: {best['run_name']})")
+        lines.append("")
+        lines.append(markdown_table(["Class", "F1", "Recall", "Support"], hc_rows))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Confusion matrix collector
+# ---------------------------------------------------------------------------
+
+def collect_confusion_matrices(reports: list[dict], output_dir: Path) -> list[str]:
+    """Copy confusion matrix PNGs into the output directory."""
+    collected = []
+    for r in reports:
+        cm_path = r.get("artifacts", {}).get("confusion_matrix_png")
+        if cm_path and Path(cm_path).exists():
+            dest_name = f"cm__{r['run_name']}.png"
+            dest = output_dir / dest_name
+            shutil.copy2(cm_path, dest)
+            collected.append(dest_name)
+    return collected
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Scaffold for mainline submission-package assembly.")
-    parser.add_argument("--config", type=str, default=None, help="Path to future reporting config.")
-    parser.parse_args()
-    raise SystemExit("Scaffold only: implement the new mainline submission packaging here.")
+    args = parse_args()
+    benchmark_root = resolve_project_path(PROJECT_ROOT, args.benchmark_root)
+    output_root = ensure_dir(resolve_project_path(PROJECT_ROOT, args.output_root))
+
+    # Load data summary
+    data_summary = None
+    data_summary_path = resolve_project_path(PROJECT_ROOT, args.data_summary)
+    if data_summary_path.exists():
+        with open(data_summary_path, "r", encoding="utf-8") as f:
+            data_summary = json.load(f)
+
+    # Collect reports
+    reports = collect_reports(benchmark_root, args.backbone)
+    if not reports:
+        print(f"No reports found under {benchmark_root / args.backbone}")
+        return
+
+    print(f"Collected {len(reports)} reports")
+
+    # LaTeX tables
+    tables_dir = ensure_dir(output_root / "tables")
+
+    write_text(
+        tables_dir / "tab_main_results.tex",
+        latex_table_experiment_grid(reports),
+    )
+
+    for domain in DOMAINS:
+        write_text(
+            tables_dir / f"tab_perclass_{DOMAIN_SHORT[domain]}.tex",
+            latex_table_per_class(reports, domain),
+        )
+
+    if data_summary:
+        write_text(
+            tables_dir / "tab_dataset_stats.tex",
+            latex_table_dataset_stats(data_summary),
+        )
+
+    # Confusion matrices
+    figures_dir = ensure_dir(output_root / "figures")
+    cm_files = collect_confusion_matrices(reports, figures_dir)
+    print(f"Collected {len(cm_files)} confusion matrices")
+
+    # Markdown summary
+    summary_md = build_markdown_summary(reports, data_summary)
+    write_text(output_root / "submission_summary.md", summary_md)
+
+    # Metadata
+    write_json(output_root / "package_metadata.json", {
+        "n_reports": len(reports),
+        "backbone": args.backbone,
+        "domains": DOMAINS,
+        "classes": CLASSES,
+        "hard_classes": HARD_CLASSES,
+        "tables": sorted(str(p.name) for p in tables_dir.iterdir()),
+        "figures": sorted(cm_files),
+    })
+
+    print(f"Wrote submission package to: {output_root}")
 
 
 if __name__ == "__main__":

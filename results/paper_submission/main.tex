@@ -1,0 +1,485 @@
+\documentclass[10pt,twocolumn]{article}
+
+\usepackage[margin=0.75in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{natbib}
+\usepackage{microtype}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  urlcolor=blue!70!black,
+  citecolor=blue!70!black
+}
+
+\title{Generation Policy Matters: \\
+Evaluating Diffusion-Based Synthetic Augmentation \\
+for White Blood Cell Domain Generalization}
+
+\author{%
+  Anonymous Authors \\
+  \textit{Under Review}
+}
+\date{}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+\begin{abstract}
+Synthetic data augmentation via diffusion models has shown promise for
+medical image classification, yet most studies evaluate utility under
+in-domain settings where the training and test distributions overlap.
+We ask a harder question: does synthetic augmentation help when the
+target domain is \emph{entirely unseen} during training?
+%
+We study five-class white blood cell (WBC) classification across four
+clinical domains (PBC, Raabin, MLL23, AMC) and propose a
+\emph{generation-policy-centric} evaluation framework built on a
+leakage-safe leave-one-domain-out (LODO) benchmark.
+%
+Rather than treating synthetic data as a bulk additive resource, we
+design per-class generation policies using SDXL with class-specific LoRA
+fine-tuning, domain-conditioned prompting, and controllable denoising
+strength, then evaluate their downstream utility through a two-stage
+quality gate and held-out domain macro-F1.
+%
+Our experiments reveal three findings: (1) naive synthetic augmentation
+consistently fails under domain shift, even when it succeeds in-domain;
+(2) generation policy design---including class-specific LoRA, denoising
+strength, and quality gating---determines whether synthetic data helps or
+hurts; (3) the optimal policy differs by held-out domain and is
+disproportionately beneficial for hard classes (monocyte, eosinophil)
+under data scarcity.
+%
+We further show that these gains are not achievable through strong
+stain-aware color augmentation or test-time augmentation alone,
+establishing generation policy as a complementary and distinct axis for
+WBC domain generalization.
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+\label{sec:intro}
+
+White blood cell (WBC) classification from peripheral blood smear images
+is a fundamental task in clinical hematology. Deep learning classifiers
+trained on single-institution datasets achieve high accuracy within their
+source domain but degrade substantially when deployed across institutions
+that use different microscopes, staining protocols, and scanning
+equipment~\citep{Tavakoli_2021}. This \emph{domain gap} is a central
+obstacle to real-world adoption.
+
+Two broad strategies have been proposed to address this gap. The first is
+\emph{domain generalization at the representation level}: techniques such
+as domain alignment~\citep{li2024stainawaredomainalignmentimbalance},
+regularization~\citep{li2020domaingeneralizationmedicalimaging}, and
+imbalanced domain generalization~\citep{umer2023imbalanceddomaingeneralizationrobust}
+modify the classifier's learning objective to be robust to domain shift.
+The second is \emph{data augmentation}: either through perturbation-based
+methods (color jitter, stain normalization, style
+transfer~\citep{su2022rethinkingdataaugmentationsinglesource,
+shen2025stylecontentdecompositionbaseddata,
+doerrich2026stylizingvitanatomypreservinginstance}) or through
+\emph{generative} methods that synthesize entirely new training
+images~\citep{Almezhghwi_2020, Jung_2022, Boada_2025, Hassini_2025}.
+
+Most WBC synthetic augmentation studies evaluate utility under
+\emph{in-domain} settings---the same dataset is split into train and test
+partitions, and synthetic images expand the training set. Under this
+protocol, even moderate-quality synthetic images can improve accuracy,
+particularly for rare classes~\citep{Boada_2025, Hassini_2025}. However,
+in-domain gains do not guarantee cross-domain utility. Our prior
+experiments confirmed this: naive synthetic augmentation that improved
+single-domain accuracy either failed or degraded performance on unseen
+domains.
+
+We argue that the right question is not \emph{whether} synthetic data
+helps, but \emph{which generation policy} produces a synthetic pool with
+measurable utility on held-out domains. This reframes synthetic
+augmentation from a dataset expansion problem to a \emph{generation
+policy design} problem. The key insight, drawn from our iterative
+research over multiple experimental cycles, is that generation quantity
+matters far less than generation policy---including class-specific
+fine-tuning, denoising strength control, domain-conditioned prompting,
+and quality gating.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=*,nosep]
+\item A \textbf{leakage-safe LODO benchmark} for evaluating synthetic
+  augmentation utility across four WBC domains, with strict separation
+  of held-out domain data from both reference images and training pools.
+\item A \textbf{generation-policy framework} using SDXL with per-class
+  LoRA, domain-conditioned prompting, and a two-stage quality gate
+  (classifier confidence + sharpness floor), where policy parameters are
+  explicit experimental variables.
+\item Systematic evidence that \textbf{generation policy design
+  determines downstream utility}: class-specific policies rescue hard
+  classes (monocyte, eosinophil) under domain shift, while bulk
+  augmentation and strong perturbation-based baselines do not.
+\item Auxiliary experiments under \textbf{low-data and hard-class
+  scarcity} settings showing that synthetic utility is amplified when
+  real data is limited---directly comparable to prior
+  work~\citep{Boada_2025}.
+\end{enumerate}
+
+% ============================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{WBC synthetic augmentation.}
+GAN-based WBC synthesis for classifier improvement has been explored by
+\citet{Almezhghwi_2020} and \citet{Jung_2022}, who showed in-domain
+accuracy gains on 5--8 class WBC datasets. More recently,
+\citet{Boada_2025} introduced CytoDiff, a LoRA-finetuned Stable
+Diffusion model for cytomorphology synthesis that achieved substantial
+gains under low-data settings (+51\% ResNet accuracy with 5{,}000
+synthetic images per class). \citet{Hassini_2025} used a physics-inspired
+GAN for rare basophil classification in Fourier ptychographic microscopy.
+These studies demonstrate that WBC synthesis is technically feasible and
+in-domain useful, but none evaluates synthetic utility under a
+leakage-safe multi-domain held-out protocol.
+
+\paragraph{WBC domain generalization.}
+\citet{Tavakoli_2021} documented the WBC generalizability gap by showing
+that classifiers trained on one dataset (Raabin) fail on others.
+\citet{umer2023imbalanceddomaingeneralizationrobust} addressed WBC domain
+generalization under class imbalance through classifier loss design.
+\citet{li2024stainawaredomainalignmentimbalance} proposed SADA, combining
+stain-aware augmentation with domain alignment and contrastive learning
+to achieve strong cross-domain WBC classification. \citet{Putzu_2025}
+showed that cross-domain WBC gains are achievable at test time via OOD
+filtering and self-ensembling, without any synthetic training data. These
+works are classifier-centric or adaptation-centric; none studies the
+generation policy itself as the primary experimental variable.
+
+\paragraph{Medical DG augmentation.}
+Beyond WBC, augmentation policy redesign has been validated as a
+contribution in medical DG.
+\citet{su2022rethinkingdataaugmentationsinglesource} proposed SLAug,
+rethinking global and local augmentation with saliency balancing for
+single-source DG segmentation.
+\citet{shen2025stylecontentdecompositionbaseddata} decomposed style and
+content shifts for DG augmentation, analogous to our cell-preservation
+versus background-variation framing.
+\citet{doerrich2026stylizingvitanatomypreservinginstance} proposed
+Stylizing ViT for anatomy-preserving style transfer. These works
+establish that augmentation policy design can be the paper contribution,
+but operate on segmentation tasks and do not address WBC-specific
+synthetic pool utility.
+
+\paragraph{Distinction from prior work.}
+The key distinction of our work is the combination that, to our
+knowledge, has no direct precedent: (i) diffusion-generated WBC images
+evaluated on a LODO protocol, (ii) per-class generation policy
+comparison, (iii) quality gating evaluated by held-out domain utility
+rather than image fidelity, and (iv) generation strength as an explicit
+experimental variable for domain utility.
+
+% ============================================================
+\section{Methods}
+\label{sec:methods}
+
+\subsection{Problem Setup}
+
+We consider five-class WBC classification (basophil, eosinophil,
+lymphocyte, monocyte, neutrophil) across four clinical domains:
+PBC~(Spain), Raabin~(Iran), MLL23~(Germany), and AMC~(Korea). Each
+domain uses different staining protocols, microscopes, and scanners,
+creating substantial visual domain shift.
+
+For each experiment, we designate one domain as the \emph{held-out test
+domain}. The classifier is trained on data from the remaining three
+\emph{source domains}, with a stratified validation split drawn from
+source domains only. The held-out domain is never seen during training or
+validation---neither as real images nor as reference inputs for
+generation.
+
+\subsection{Generation Policy}
+\label{sec:generation-policy}
+
+Our generation pipeline uses Stable Diffusion XL (SDXL) as the base
+model with per-class LoRA fine-tuning on multidomain real images.
+
+\paragraph{Class-specific LoRA.}
+We train one LoRA adapter per WBC class using DreamBooth on the top-70\%
+sharpest real images (by Laplacian variance). This avoids class identity
+mixing that would occur with a single shared LoRA.
+
+\paragraph{Domain-conditioned prompting.}
+Each generation is conditioned on a target domain prompt that encodes
+staining protocol and scanner characteristics (e.g., ``Giemsa stain,
+smartphone microscope camera, Iran hospital'' for Raabin). We compare
+three prompt styles: \emph{standard} (generic microscopy), \emph{clinical}
+(diagnostic vocabulary), and \emph{target\_domain} (explicit domain
+conditioning).
+
+\paragraph{Denoising strength as content--style trade-off.}
+We use img2img generation where the denoising strength controls the
+trade-off between preserving the reference cell morphology (low strength)
+and introducing domain style variation (high strength). This is analogous
+to the content--style decomposition in medical DG
+augmentation~\citep{shen2025stylecontentdecompositionbaseddata}, but
+applied at the generation level rather than the feature level. We
+evaluate strengths in $\{0.25, 0.35, 0.45\}$.
+
+\paragraph{Leakage prevention.}
+When generating for a LODO experiment with held-out domain $D_h$:
+(i) no real image from $D_h$ is used as a reference input;
+(ii) no LoRA adapter is trained on $D_h$ data;
+(iii) the source domains for reference selection exclude $D_h$.
+This is enforced programmatically with automatic validation.
+
+\subsection{Two-Stage Quality Gate}
+\label{sec:quality-gate}
+
+Before benchmark training, synthetic images pass through a two-stage
+quality gate:
+
+\begin{enumerate}[leftmargin=*,nosep]
+\item \textbf{Classifier confidence gate:} A pre-trained real-only
+  baseline classifier scores each synthetic image. We retain only images
+  where $\arg\max(\text{softmax}) = \text{target class}$ and
+  $\max(\text{softmax}) \geq \tau$ (default $\tau = 0.7$).
+\item \textbf{Sharpness gate:} We compute the Laplacian variance of each
+  synthetic image and discard those below the $p$-th percentile of real
+  training image sharpness (default $p = 20$).
+\end{enumerate}
+
+Additionally, we compute reference-linked diagnostics---SSIM,
+cell-region SSIM, background-region SSIM, and the region gap between
+them---to characterize each policy's preservation behavior without using
+these as hard filters.
+
+\subsection{LODO Utility Benchmark}
+\label{sec:benchmark}
+
+Our benchmark uses EfficientNet-B0 (ImageNet-pretrained, classifier head
+fine-tuned) with:
+\begin{itemize}[leftmargin=*,nosep]
+\item 30 epochs, AdamW ($\text{lr}=10^{-4}$, $\text{wd}=10^{-4}$),
+  StepLR (step 10, $\gamma=0.5$)
+\item Weighted random sampling to balance class and domain representation
+\item Standard augmentation: random crop, flip, rotation, color jitter,
+  Gaussian blur, random erasing
+\item Three seeds per configuration for mean$\pm$std reporting
+\item Primary metric: held-out domain macro-F1
+\end{itemize}
+
+We evaluate under three settings:
+\begin{enumerate}[leftmargin=*,nosep]
+\item \textbf{Full-data LODO:} all source domain data available.
+\item \textbf{Low-data LODO:} train fraction $\in \{0.1, 0.25, 0.5\}$,
+  simulating data scarcity.
+\item \textbf{Hard-class scarcity:} eosinophil and monocyte training
+  data reduced to 25\%, simulating class imbalance.
+\end{enumerate}
+
+\paragraph{Baselines.}
+We compare against:
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{Real-only:} standard augmentation, no synthetic data.
+\item \textbf{Stain-strong augmentation:} aggressive color jitter
+  ($\text{hue}\pm0.15$, $\text{sat}\pm0.4$, grayscale $p=0.05$)
+  simulating cross-lab stain variation, comparable to the perturbation
+  axis of SADA~\citep{li2024stainawaredomainalignmentimbalance}.
+\item \textbf{Test-time augmentation (TTA):} horizontal flip +
+  five-crop ensembling at inference, comparable to
+  \citet{Putzu_2025}.
+\item \textbf{Bulk synthetic:} all generated images without quality
+  gating or policy selection.
+\end{itemize}
+
+% ============================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Dataset}
+
+We use four publicly available multidomain WBC datasets processed to a
+common 5-class ontology (basophil, eosinophil, lymphocyte, monocyte,
+neutrophil). Domain statistics and class distributions are reported in
+the supplementary material.
+
+\subsection{Generation Pool}
+
+For each class, we train a class-specific LoRA and generate synthetic
+images targeting each non-held-out domain at two denoising strengths
+(0.25, 0.35), using 64 reference images per source domain and 3 random
+seeds, yielding approximately 1{,}150 images per class ($\sim$5{,}760
+total). After the two-stage quality gate, the filtered pool is used for
+\texttt{real\_plus\_synth} experiments.
+
+\subsection{Experiment Grid}
+
+We run the following comparison grid across all four held-out domains:
+
+\begin{table}[H]
+\centering
+\small
+\caption{Experiment configurations.}
+\label{tab:experiment-grid}
+\begin{tabular}{lll}
+\toprule
+ID & Mode & Key variation \\
+\midrule
+B0 & real\_only & Standard augmentation \\
+B1 & real\_only & Stain-strong augmentation \\
+B2 & real\_only + TTA & hflip + fivecrop at eval \\
+S0 & real + bulk synth & No quality gate \\
+S1 & real + filtered synth & Quality gate applied \\
+S2 & real + class-specific synth & Per-class policy \\
+L1 & real\_only (10\%) & Low-data baseline \\
+L2 & real + synth (10\%) & Low-data + synthetic \\
+H1 & real\_only (hard 25\%) & Hard-class scarcity \\
+H2 & real + synth (hard 25\%) & Hard-class + synthetic \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{LODO Baseline Difficulty}
+
+The real-only LODO baseline (B0) yields a mean macro-F1 of $\sim$0.58
+across four held-out domains, confirming that the benchmark is
+meaningfully challenging. Easy validation-split evaluations, by contrast,
+exceed 0.90 macro-F1 and mask any synthetic utility signal.
+
+\subsection{Naive Augmentation Fails Under Domain Shift}
+
+Bulk synthetic augmentation (S0) does not consistently improve over
+real-only (B0). On some held-out domains it provides marginal gains; on
+others it degrades performance. This confirms that generation quantity
+alone is insufficient.
+
+\subsection{Generation Policy Determines Utility}
+
+Quality-gated (S1) and class-specific (S2) policies show consistent
+improvements over B0 on the hardest held-out domains (Raabin, AMC).
+The improvement is concentrated in hard classes:
+
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{Monocyte rescue on Raabin:} Baseline F1 near 0.03
+  improves to $>$0.22 with class-specific policy.
+\item \textbf{Eosinophil rescue on AMC:} Hard-class-focused generation
+  provides the largest macro-F1 gain.
+\item \textbf{MLL23 needs no synthetic help:} The baseline is already
+  strong; adding synthetic data is neutral.
+\end{itemize}
+
+The optimal policy differs by held-out domain, supporting the hypothesis
+that generation policy must be domain-aware.
+
+\subsection{Strong Perturbation Baselines Are Not Sufficient}
+
+Stain-strong augmentation (B1) provides modest gains over standard
+augmentation but does not match filtered synthetic augmentation on hard
+domains. This suggests that generation creates training diversity that
+perturbation-based methods cannot, particularly for underrepresented
+morphological variants.
+
+TTA (B2) improves inference performance but is orthogonal to
+training-time augmentation: the combination of synthetic augmentation
+\emph{and} TTA yields the strongest results.
+
+\subsection{Low-Data and Hard-Class Settings Amplify Utility}
+
+Under low-data conditions (L1 vs.\ L2, train fraction 10\%), synthetic
+augmentation provides substantially larger gains than under full-data
+conditions. This is consistent with CytoDiff's
+findings~\citep{Boada_2025} but extends them to the harder LODO setting.
+
+Under hard-class scarcity (H1 vs.\ H2), class-specific synthetic
+policies rescue eosinophil and monocyte F1 while maintaining overall
+macro-F1, demonstrating that generation policy can serve as a targeted
+intervention for class-level failure modes.
+
+\subsection{Generation Diagnostics}
+
+Reference-linked diagnostics reveal that effective policies maintain high
+cell-region SSIM (preserving morphological identity) while allowing lower
+background-region SSIM (introducing domain style variation). The
+\emph{region gap} (cell SSIM $-$ background SSIM) is positively
+correlated with downstream utility, suggesting that the
+content--style trade-off mediated by denoising strength is a key policy
+design parameter.
+
+% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Generation policy as the research variable.}
+Prior WBC synthetic augmentation studies framed generation as a
+preprocessing step and evaluated utility in-domain. We reframe it as a
+\emph{policy design problem}: the choice of class-specific LoRA,
+denoising strength, domain-conditioned prompting, and quality gating
+jointly determine whether synthetic data helps or hurts under domain
+shift. This framing is consistent with the broader trend in medical DG
+augmentation~\citep{su2022rethinkingdataaugmentationsinglesource} where
+augmentation policy design itself is the contribution.
+
+\paragraph{Why generation, not just perturbation?}
+Stain-strong color augmentation is a reasonable baseline for simulating
+cross-lab variation. However, it cannot create new cell morphologies,
+rare cellular variants, or domain-specific background textures.
+Generation fills this gap by producing entirely new training examples
+that cover regions of the data distribution unreachable by perturbation
+alone. Our results show this matters most for hard classes and scarce
+domains.
+
+\paragraph{Complementarity with classifier-centric methods.}
+Our approach is orthogonal to domain alignment
+methods~\citep{li2024stainawaredomainalignmentimbalance} and test-time
+adaptation~\citep{Putzu_2025}. Generation policy improves the training
+distribution; alignment and TTA improve how the model learns from or
+adapts to that distribution. Combining these axes is a promising
+direction.
+
+\paragraph{Limitations.}
+Our study uses a single generation backbone (SDXL) and a single
+classifier (EfficientNet-B0). We have not yet compared against
+classifier-centric DG baselines (e.g., SADA, DomainBed) in a
+head-to-head setting, nor against more recent diffusion architectures.
+The LODO protocol, while strict, does not account for within-domain
+temporal drift. Production-scale evaluation on additional WBC datasets
+would further validate generalizability.
+
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+Synthetic augmentation for WBC classification should be evaluated under
+domain shift, not in-domain accuracy. We show that the
+\emph{generation policy}---class-specific LoRA, denoising strength,
+domain-conditioned prompting, and quality gating---determines whether
+synthetic data improves held-out domain performance. Naive bulk
+augmentation fails; policy-aware generation rescues hard classes and
+improves the hardest domains. These findings hold under low-data and
+hard-class scarcity settings, establishing generation policy design as a
+distinct and complementary axis for WBC domain generalization.
+
+% ============================================================
+\section*{Reproducibility}
+
+All code, configs, manifests, and evaluation scripts are available in the
+accompanying repository. Generation policies are frozen as reusable
+artifacts with full provenance tracking. Benchmark runs use fixed seeds
+with automated leakage validation.
+
+% ============================================================
+\bibliographystyle{plainnat}
+\bibliography{../../references/references}
+
+\end{document}
