@@ -21,3 +21,4 @@ lr_step_size: 10
 lr_gamma: 0.5
 class_fractions: {}
 eval_tta_mode: hflip_fivecrop
+train_augment_mode: standard

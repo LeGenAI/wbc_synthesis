@@ -46,6 +46,7 @@ from scripts.mainline.common.runtime import (
 from scripts.mainline.common.split import stratified_class_fractions, stratified_fraction
 
 EVAL_TTA_MODES = {"none", "hflip", "fivecrop", "hflip_fivecrop"}
+TRAIN_AUGMENT_MODES = {"standard", "stain_strong"}
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
@@ -109,6 +110,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--all-heldouts", action="store_true")
     parser.add_argument("--eval-tta-mode", type=str, default=None)
+    parser.add_argument("--train-augment-mode", type=str, default=None)
     parser.add_argument(
         "--seeds",
         type=int,
@@ -153,6 +155,12 @@ def validate_config(config: dict) -> dict:
             f"Unsupported eval_tta_mode: {eval_tta_mode}. "
             f"Expected one of {sorted(EVAL_TTA_MODES)}"
         )
+    train_augment_mode = str(config.get("train_augment_mode", "standard"))
+    if train_augment_mode not in TRAIN_AUGMENT_MODES:
+        raise ValueError(
+            f"Unsupported train_augment_mode: {train_augment_mode}. "
+            f"Expected one of {sorted(TRAIN_AUGMENT_MODES)}"
+        )
     if not (0.0 < float(config["train_fraction"]) <= 1.0):
         raise ValueError(f"train_fraction must be in (0, 1], got {config['train_fraction']}")
     if config["mode"] == "real_plus_synth" and not config.get("synthetic_manifest"):
@@ -186,10 +194,30 @@ def validate_config(config: dict) -> dict:
         "class_fractions": class_fractions,
         "all_heldouts": bool(config.get("all_heldouts", False)),
         "eval_tta_mode": eval_tta_mode,
+        "train_augment_mode": train_augment_mode,
     }
 
 
-def get_train_transform(image_size: int):
+def get_train_transform(image_size: int, train_augment_mode: str = "standard"):
+    if train_augment_mode == "stain_strong":
+        # SADA-comparable baseline: aggressive stain-like color jitter.
+        # Simulates stain variation across labs (Giemsa, May-Grunwald, Pappenheim)
+        # without requiring explicit stain normalization or alignment modules.
+        return transforms.Compose(
+            [
+                transforms.Resize((256, 256)),
+                transforms.RandomCrop(image_size),
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomVerticalFlip(),
+                transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.15),
+                transforms.RandomRotation(15),
+                transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5)),
+                transforms.RandomGrayscale(p=0.05),
+                transforms.ToTensor(),
+                transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+                transforms.RandomErasing(p=0.15),
+            ]
+        )
     return transforms.Compose(
         [
             transforms.Resize((256, 256)),
@@ -403,6 +431,7 @@ def render_report_markdown(report: dict) -> str:
         f"- Held-out domain: `{report['heldout_domain']}`",
         f"- Device: `{report['device']}`",
         f"- Eval TTA mode: `{report['eval_tta_mode']}`",
+        f"- Train augment mode: `{report.get('train_augment_mode', 'standard')}`",
         "",
         "## Hard-class Setting",
         "",
@@ -482,6 +511,8 @@ def build_run_name(config: dict) -> str:
             for class_name, value in sorted(config["class_fractions"].items())
         )
         parts.append(f"cf_{fraction_tag}")
+    if config.get("train_augment_mode", "standard") != "standard":
+        parts.append(f"aug_{config['train_augment_mode']}")
     if config.get("eval_tta_mode", "none") != "none":
         parts.append(f"tta_{config['eval_tta_mode']}")
     return "__".join(parts)
@@ -571,7 +602,7 @@ def run_single_seed(config: dict) -> dict:
     ).to(device)
 
     train_loader = DataLoader(
-        ManifestDataset(train_items, transform=get_train_transform(config["image_size"])),
+        ManifestDataset(train_items, transform=get_train_transform(config["image_size"], config["train_augment_mode"])),
         batch_size=config["batch_size"],
         sampler=WeightedRandomSampler(
             get_sample_weights(train_items, config["synthetic_sampling_weight"]),
@@ -643,6 +674,7 @@ def run_single_seed(config: dict) -> dict:
         "heldout_domain": config["heldout_domain"],
         "device": str(device),
         "eval_tta_mode": config["eval_tta_mode"],
+        "train_augment_mode": config["train_augment_mode"],
         "hard_classes": HARD_CLASSES,
         "config": config,
         "history": history,
@@ -785,6 +817,7 @@ def main() -> None:
             "all_heldouts": True if args.all_heldouts else None,
             "class_fractions": cli_class_fractions,
             "eval_tta_mode": args.eval_tta_mode,
+            "train_augment_mode": args.train_augment_mode,
         },
     )
     config = validate_config(config)

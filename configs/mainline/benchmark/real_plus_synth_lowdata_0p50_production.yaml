@@ -1,5 +1,7 @@
-# PRODUCTION CONFIG: hard-class scarcity benchmark with synthetic augmentation.
-# Set synthetic_manifest to a merged/filtered manifest before running.
+# PRODUCTION CONFIG: low-data + synthetic augmentation.
+# Directly comparable to real_only_lowdata_0p50_production.yaml.
+# Set synthetic_manifest before running.
+# Run with --seeds 42 123 456 for mean+/-std reporting.
 mode: real_plus_synth
 manifest_root: results/mainline/data
 heldout_domain: domain_b_raabin
@@ -9,7 +11,7 @@ epochs: 30
 lr: 0.0001
 weight_decay: 0.0001
 seed: 42
-train_fraction: 1.0
+train_fraction: 0.5
 output_root: results/mainline/benchmark
 num_workers: 4
 image_size: 224
@@ -19,8 +21,6 @@ synthetic_sampling_weight: 0.5
 leakage_filter: true
 lr_step_size: 10
 lr_gamma: 0.5
-class_fractions:
-  eosinophil: 0.25
-  monocyte: 0.25
+class_fractions: {}
 eval_tta_mode: none
 train_augment_mode: standard

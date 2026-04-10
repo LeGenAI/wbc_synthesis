@@ -1,5 +1,12 @@
 # PRODUCTION CONFIG: generate a meaningfully-sized synthetic pool.
 # Override --policy-dir per class when running for each of the 5 classes.
+#
+# Pool size calculation (per class, default settings):
+#   n_per_domain(64) x target_domains(3) x strengths(2) x n_seeds(3) = 1152 images/class
+#   5 classes total = ~5760 images
+#
+# This is comparable to CytoDiff's evaluation scale (5000/class)
+# while keeping generation time feasible on MPS (~3 hours total).
 policy_dir: results/mainline/generation/policies/policy_v1_monocyte_raabin_amc
 heldout_domain: domain_b_raabin
 reference_manifest: null
@@ -7,7 +14,7 @@ target_domains:
   - domain_a_pbc
   - domain_c_mll23
   - domain_e_amc
-n_per_domain: 16
+n_per_domain: 64
 n_seeds: 3
 seed: 42
 max_images: null
