@@ -23,6 +23,7 @@ from PIL import Image
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import transforms
+from torchvision.transforms import functional as TF
 from tqdm import tqdm
 
 
@@ -44,6 +45,10 @@ from scripts.mainline.common.runtime import (
 )
 from scripts.mainline.common.split import stratified_class_fractions, stratified_fraction
 
+EVAL_TTA_MODES = {"none", "hflip", "fivecrop", "hflip_fivecrop"}
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
 
 class ManifestDataset(Dataset):
     def __init__(self, items: list[dict], transform=None):
@@ -61,9 +66,35 @@ class ManifestDataset(Dataset):
         return image, CLASS_TO_IDX[item["class_name"]]
 
 
+class EvalTransform:
+    def __init__(self, image_size: int, eval_tta_mode: str):
+        self.image_size = image_size
+        self.eval_tta_mode = eval_tta_mode
+        self.resize_size = max(image_size + 32, 256)
+
+    def __call__(self, image: Image.Image) -> torch.Tensor:
+        if self.eval_tta_mode == "none":
+            resized = TF.resize(image, [self.image_size, self.image_size], antialias=True)
+            return normalize_eval_image(resized)
+        if self.eval_tta_mode == "hflip":
+            resized = TF.resize(image, [self.image_size, self.image_size], antialias=True)
+            views = [resized, TF.hflip(resized)]
+        elif self.eval_tta_mode == "fivecrop":
+            resized = TF.resize(image, [self.resize_size, self.resize_size], antialias=True)
+            views = list(TF.five_crop(resized, [self.image_size, self.image_size]))
+        elif self.eval_tta_mode == "hflip_fivecrop":
+            resized = TF.resize(image, [self.resize_size, self.resize_size], antialias=True)
+            views = list(TF.five_crop(resized, [self.image_size, self.image_size]))
+            views.extend(TF.five_crop(TF.hflip(resized), [self.image_size, self.image_size]))
+        else:
+            raise ValueError(f"Unsupported eval_tta_mode: {self.eval_tta_mode}")
+        return torch.stack([normalize_eval_image(view) for view in views], dim=0)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the mainline leakage-safe LODO utility benchmark."
+        description="Run the mainline leakage-safe LODO utility benchmark.",
+        allow_abbrev=False,
     )
     parser.add_argument(
         "--config",
@@ -77,6 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-fraction", type=float, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--all-heldouts", action="store_true")
+    parser.add_argument("--eval-tta-mode", type=str, default=None)
     parser.add_argument(
         "--seeds",
         type=int,
@@ -115,6 +147,12 @@ def validate_config(config: dict) -> dict:
         raise ValueError(f"Unsupported backbone: {config['backbone']}")
     if config["mode"] not in {"real_only", "real_plus_synth"}:
         raise ValueError(f"Unsupported mode: {config['mode']}")
+    eval_tta_mode = str(config.get("eval_tta_mode", "none"))
+    if eval_tta_mode not in EVAL_TTA_MODES:
+        raise ValueError(
+            f"Unsupported eval_tta_mode: {eval_tta_mode}. "
+            f"Expected one of {sorted(EVAL_TTA_MODES)}"
+        )
     if not (0.0 < float(config["train_fraction"]) <= 1.0):
         raise ValueError(f"train_fraction must be in (0, 1], got {config['train_fraction']}")
     if config["mode"] == "real_plus_synth" and not config.get("synthetic_manifest"):
@@ -147,6 +185,7 @@ def validate_config(config: dict) -> dict:
         "lr_gamma": float(config.get("lr_gamma", 0.5)),
         "class_fractions": class_fractions,
         "all_heldouts": bool(config.get("all_heldouts", False)),
+        "eval_tta_mode": eval_tta_mode,
     }
 
 
@@ -161,20 +200,18 @@ def get_train_transform(image_size: int):
             transforms.RandomRotation(15),
             transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0)),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
             transforms.RandomErasing(p=0.1),
         ]
     )
 
 
-def get_eval_transform(image_size: int):
-    return transforms.Compose(
-        [
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ]
-    )
+def normalize_eval_image(image: Image.Image) -> torch.Tensor:
+    return TF.normalize(TF.to_tensor(image), IMAGENET_MEAN, IMAGENET_STD)
+
+
+def get_eval_transform(image_size: int, eval_tta_mode: str):
+    return EvalTransform(image_size=image_size, eval_tta_mode=eval_tta_mode)
 
 
 def load_split_manifests(manifest_root: Path, heldout_domain: str) -> tuple[list[dict], list[dict], list[dict]]:
@@ -274,9 +311,13 @@ def evaluate(
     y_pred = []
     with torch.no_grad():
         for images, targets in tqdm(dataloader, desc="eval", leave=False):
-            images = images.to(device)
             targets = targets.to(device)
-            logits = model(images)
+            if images.ndim == 5:
+                batch_size, n_views, channels, height, width = images.shape
+                logits = model(images.reshape(batch_size * n_views, channels, height, width).to(device))
+                logits = logits.reshape(batch_size, n_views, len(CLASSES)).mean(dim=1)
+            else:
+                logits = model(images.to(device))
             loss = criterion(logits, targets)
             losses.append(loss.item() * targets.size(0))
             predictions = logits.argmax(dim=1)
@@ -361,6 +402,7 @@ def render_report_markdown(report: dict) -> str:
         f"- Backbone: `{report['backbone']}`",
         f"- Held-out domain: `{report['heldout_domain']}`",
         f"- Device: `{report['device']}`",
+        f"- Eval TTA mode: `{report['eval_tta_mode']}`",
         "",
         "## Hard-class Setting",
         "",
@@ -440,6 +482,8 @@ def build_run_name(config: dict) -> str:
             for class_name, value in sorted(config["class_fractions"].items())
         )
         parts.append(f"cf_{fraction_tag}")
+    if config.get("eval_tta_mode", "none") != "none":
+        parts.append(f"tta_{config['eval_tta_mode']}")
     return "__".join(parts)
 
 
@@ -459,6 +503,7 @@ def update_summary(heldout_root: Path) -> None:
                 "test_macro_f1": report["test"]["macro_f1"],
                 "test_accuracy": report["test"]["accuracy"],
                 "excluded_for_heldout_domain": report["synthetic_guard"]["excluded_for_heldout_domain"],
+                "eval_tta_mode": report.get("eval_tta_mode", report.get("config", {}).get("eval_tta_mode", "none")),
             }
         )
     write_json(heldout_root / "summary.json", {"runs": rows})
@@ -470,6 +515,7 @@ def update_summary(heldout_root: Path) -> None:
             row["test_accuracy"],
             row["test_macro_f1"],
             row["excluded_for_heldout_domain"],
+            row["eval_tta_mode"],
         ]
         for row in rows
     ]
@@ -480,7 +526,7 @@ def update_summary(heldout_root: Path) -> None:
                 "# Mainline Benchmark Summary",
                 "",
                 markdown_table(
-                    ["Run", "Mode", "Backbone", "Test Acc", "Test Macro-F1", "Leakage Excluded"],
+                    ["Run", "Mode", "Backbone", "Test Acc", "Test Macro-F1", "Leakage Excluded", "Eval TTA"],
                     markdown_rows,
                 ),
                 "",
@@ -535,13 +581,13 @@ def run_single_seed(config: dict) -> dict:
         num_workers=config["num_workers"],
     )
     val_loader = DataLoader(
-        ManifestDataset(val_items, transform=get_eval_transform(config["image_size"])),
+        ManifestDataset(val_items, transform=get_eval_transform(config["image_size"], config["eval_tta_mode"])),
         batch_size=config["batch_size"],
         shuffle=False,
         num_workers=config["num_workers"],
     )
     test_loader = DataLoader(
-        ManifestDataset(test_items, transform=get_eval_transform(config["image_size"])),
+        ManifestDataset(test_items, transform=get_eval_transform(config["image_size"], config["eval_tta_mode"])),
         batch_size=config["batch_size"],
         shuffle=False,
         num_workers=config["num_workers"],
@@ -596,6 +642,7 @@ def run_single_seed(config: dict) -> dict:
         "backbone": config["backbone"],
         "heldout_domain": config["heldout_domain"],
         "device": str(device),
+        "eval_tta_mode": config["eval_tta_mode"],
         "hard_classes": HARD_CLASSES,
         "config": config,
         "history": history,
@@ -631,6 +678,7 @@ def write_all_heldouts_summary(reports_by_domain: dict[str, list[dict]], output_
                 "heldout_domain": heldout_domain,
                 "n_runs": len(reports),
                 "seeds": [report["config"]["seed"] for report in reports],
+                "eval_tta_mode": reports[0]["eval_tta_mode"] if reports else "none",
                 "test_macro_f1_mean": round(float(np.mean(test_f1s)), 4),
                 "test_macro_f1_std": round(float(np.std(test_f1s)), 4),
                 "test_accuracy_mean": round(float(np.mean(test_accs)), 4),
@@ -647,12 +695,13 @@ def write_all_heldouts_summary(reports_by_domain: dict[str, list[dict]], output_
                 "# All-heldouts Benchmark Summary",
                 "",
                 markdown_table(
-                    ["Heldout", "N Runs", "Seeds", "Test Acc Mean", "Test Acc Std", "Test Macro-F1 Mean", "Test Macro-F1 Std"],
+                    ["Heldout", "N Runs", "Seeds", "Eval TTA", "Test Acc Mean", "Test Acc Std", "Test Macro-F1 Mean", "Test Macro-F1 Std"],
                     [
                         [
                             row["heldout_domain"],
                             row["n_runs"],
                             row["seeds"],
+                            row["eval_tta_mode"],
                             row["test_accuracy_mean"],
                             row["test_accuracy_std"],
                             row["test_macro_f1_mean"],
@@ -679,6 +728,7 @@ def aggregate_multi_seed(reports: list[dict], output_path: Path) -> None:
     summary = {
         "n_seeds": len(reports),
         "seeds": [r["config"]["seed"] for r in reports],
+        "eval_tta_mode": reports[0]["eval_tta_mode"] if reports else "none",
         "test_macro_f1_mean": round(float(np.mean(test_f1s)), 4),
         "test_macro_f1_std": round(float(np.std(test_f1s)), 4),
         "test_accuracy_mean": round(float(np.mean(test_accs)), 4),
@@ -706,6 +756,7 @@ def aggregate_multi_seed(reports: list[dict], output_path: Path) -> None:
         "# Multi-seed Benchmark Summary",
         "",
         f"- Seeds: `{summary['seeds']}`",
+        f"- Eval TTA mode: `{summary['eval_tta_mode']}`",
         f"- Test Macro-F1: `{summary['test_macro_f1_mean']:.4f} +/- {summary['test_macro_f1_std']:.4f}`",
         f"- Test Accuracy: `{summary['test_accuracy_mean']:.4f} +/- {summary['test_accuracy_std']:.4f}`",
         "",
@@ -733,6 +784,7 @@ def main() -> None:
             "epochs": args.epochs,
             "all_heldouts": True if args.all_heldouts else None,
             "class_fractions": cli_class_fractions,
+            "eval_tta_mode": args.eval_tta_mode,
         },
     )
     config = validate_config(config)

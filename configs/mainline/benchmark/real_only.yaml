@@ -20,3 +20,4 @@ leakage_filter: true
 lr_step_size: 10
 lr_gamma: 0.5
 class_fractions: {}
+eval_tta_mode: none

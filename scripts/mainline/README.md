@@ -13,7 +13,7 @@ This directory contains the canonical research pipeline aligned to the paper sup
 4. `scoring/04_score_synthetic_pool.py`
    Two-stage quality gate plus reference-linked diagnostics (`ssim`, `cell_ssim`, `background_ssim`, `region_gap`).
 5. `benchmark/05_train_lodo_utility_benchmark.py`
-   Leakage-safe LODO utility benchmark with multi-seed, hard-class scarcity, and all-heldouts sweep support.
+   Leakage-safe LODO utility benchmark with multi-seed, hard-class scarcity, low-data presets, test-time augmentation, and all-heldouts sweep support.
 6. `reporting/06_make_submission_package.py`
    Figures, tables, appendix, and supplementary artifact assembly.
 
@@ -66,6 +66,16 @@ python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
     --config configs/mainline/benchmark/real_only_hardclass_production.yaml \
     --seeds 42 123 456
 
+# Stage 05: low-data baseline (CytoDiff-aligned scarcity)
+python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
+    --config configs/mainline/benchmark/real_only_lowdata_0p10_production.yaml \
+    --seeds 42 123 456
+
+# Stage 05: TTA baseline (Putzu-style evaluation axis)
+python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
+    --config configs/mainline/benchmark/real_only_tta_hflip_fivecrop_production.yaml \
+    --seeds 42 123 456
+
 # Stage 05: all-heldouts sweep
 python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
     --config configs/mainline/benchmark/real_only_production.yaml \
@@ -83,6 +93,7 @@ python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
 
 - `configs/mainline/*/*.yaml` — dev configs for quick pipeline testing.
 - `configs/mainline/*/*_production.yaml` — paper-quality settings (epochs=30, larger pools).
+- `configs/mainline/benchmark/real_only_lowdata_0p{10,25,50}_production.yaml` — canonical low-data baselines for scarcity reporting.
 
 ## Design rules
 
@@ -95,3 +106,4 @@ python -m scripts.mainline.benchmark.05_train_lodo_utility_benchmark \
 - Stage 02 produces `policy_spec.json`; stage 03 produces `synthetic_manifest.json`.
 - Multi-seed runs (--seeds) are required for paper reporting.
 - `HARD_CLASSES = [eosinophil, monocyte]` is the canonical scarce-class setting for auxiliary robustness studies.
+- `eval_tta_mode` supports `none`, `hflip`, `fivecrop`, and `hflip_fivecrop` for Putzu-style test-time augmentation baselines.

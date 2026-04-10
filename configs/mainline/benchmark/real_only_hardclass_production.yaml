@@ -22,3 +22,4 @@ lr_gamma: 0.5
 class_fractions:
   eosinophil: 0.25
   monocyte: 0.25
+eval_tta_mode: none
