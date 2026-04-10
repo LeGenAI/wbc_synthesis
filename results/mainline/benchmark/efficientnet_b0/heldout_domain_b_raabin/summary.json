@@ -1,12 +1,67 @@
 {
   "runs": [
     {
+      "run_name": "real_only__efficientnet_b0__heldout_raabin__tf0p001__seed901__cf_eosi0p25_mono0p25",
+      "mode": "real_only",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.0592,
+      "test_accuracy": 0.0642,
+      "excluded_for_heldout_domain": 0,
+      "eval_tta_mode": "none"
+    },
+    {
+      "run_name": "real_only__efficientnet_b0__heldout_raabin__tf0p001__seed902__tta_hflip",
+      "mode": "real_only",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.0854,
+      "test_accuracy": 0.0919,
+      "excluded_for_heldout_domain": 0,
+      "eval_tta_mode": "hflip"
+    },
+    {
+      "run_name": "real_only__efficientnet_b0__heldout_raabin__tf0p001__seed903__tta_hflip",
+      "mode": "real_only",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.1797,
+      "test_accuracy": 0.2372,
+      "excluded_for_heldout_domain": 0,
+      "eval_tta_mode": "hflip"
+    },
+    {
+      "run_name": "real_only__efficientnet_b0__heldout_raabin__tf0p002__seed888__cf_eosi0p25_mono0p25",
+      "mode": "real_only",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.1419,
+      "test_accuracy": 0.2241,
+      "excluded_for_heldout_domain": 0,
+      "eval_tta_mode": "none"
+    },
+    {
+      "run_name": "real_only__efficientnet_b0__heldout_raabin__tf0p01__seed777",
+      "mode": "real_only",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.2261,
+      "test_accuracy": 0.3648,
+      "excluded_for_heldout_domain": 0,
+      "eval_tta_mode": "none"
+    },
+    {
       "run_name": "real_only__efficientnet_b0__heldout_raabin__tf0p05__seed42",
       "mode": "real_only",
       "backbone": "efficientnet_b0",
       "test_macro_f1": 0.2297,
       "test_accuracy": 0.3335,
-      "excluded_for_heldout_domain": 0
+      "excluded_for_heldout_domain": 0,
+      "eval_tta_mode": "none"
+    },
+    {
+      "run_name": "real_only__efficientnet_b0__heldout_raabin__tf1p0__seed42",
+      "mode": "real_only",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.2863,
+      "test_accuracy": 0.471,
+      "excluded_for_heldout_domain": 0,
+      "eval_tta_mode": "none"
     },
     {
       "run_name": "real_plus_synth__efficientnet_b0__heldout_raabin__tf0p02__seed42__synth_leakage_smoke_manifest",
@@ -14,7 +69,17 @@
       "backbone": "efficientnet_b0",
       "test_macro_f1": 0.1573,
       "test_accuracy": 0.146,
-      "excluded_for_heldout_domain": 1
+      "excluded_for_heldout_domain": 1,
+      "eval_tta_mode": "none"
+    },
+    {
+      "run_name": "real_plus_synth__efficientnet_b0__heldout_raabin__tf0p02__seed42__synth_synthetic_manifest",
+      "mode": "real_plus_synth",
+      "backbone": "efficientnet_b0",
+      "test_macro_f1": 0.1748,
+      "test_accuracy": 0.1927,
+      "excluded_for_heldout_domain": 0,
+      "eval_tta_mode": "none"
     }
   ]
 }
