@@ -335,6 +335,91 @@ def collect_confusion_matrices(reports: list[dict], output_dir: Path) -> list[st
 
 
 # ---------------------------------------------------------------------------
+# Delta comparison table
+# ---------------------------------------------------------------------------
+
+def latex_table_delta(reports: list[dict]) -> str:
+    """Generate a delta table comparing each config against real_only baseline."""
+    by_heldout = group_by_heldout(reports)
+    by_config = group_by_config_key(reports)
+
+    # Find baseline key (real_only, tf=1.0, standard, no TTA, no class_fractions)
+    baseline_key = None
+    for key in by_config:
+        if ("real_only" in key and "tf1.0" in key and "aug_standard" in key
+                and "tta_none" in key and "cf_" not in key):
+            baseline_key = key
+            break
+
+    if baseline_key is None:
+        return "% No baseline found for delta table\n"
+
+    # Baseline F1 per domain
+    baseline_reps = by_config[baseline_key]
+    baseline_f1: dict[str, float] = {}
+    for domain in DOMAINS:
+        domain_reps = [r for r in baseline_reps if r["heldout_domain"] == domain]
+        if domain_reps:
+            baseline_f1[domain] = float(np.mean([r["test"]["macro_f1"] for r in domain_reps]))
+
+    domain_shorts = [DOMAIN_SHORT[d] for d in DOMAINS]
+    header = (
+        "\\begin{table*}[t]\n"
+        "\\centering\n"
+        "\\small\n"
+        "\\caption{Macro-F1 delta vs.\\ real-only baseline (positive = improvement).}\n"
+        "\\label{tab:delta-results}\n"
+        "\\begin{tabular}{l" + "c" * len(DOMAINS) + "c}\n"
+        "\\toprule\n"
+        "Configuration & " + " & ".join(f"$\\Delta${s}" for s in domain_shorts) + " & $\\Delta$Avg \\\\\n"
+        "\\midrule\n"
+    )
+
+    rows = []
+    for config_key in sorted(by_config.keys()):
+        if config_key == baseline_key:
+            continue
+        config_reports = by_config[config_key]
+        config_by_heldout = group_by_heldout(config_reports)
+        cells = []
+        deltas = []
+        for domain in DOMAINS:
+            domain_reps = config_by_heldout.get(domain, [])
+            base = baseline_f1.get(domain)
+            if domain_reps and base is not None:
+                m = float(np.mean([r["test"]["macro_f1"] for r in domain_reps]))
+                delta = m - base
+                deltas.append(delta)
+                sign = "+" if delta >= 0 else ""
+                cells.append(f"{sign}{delta:.3f}")
+            else:
+                cells.append("--")
+        avg_delta = float(np.mean(deltas)) if deltas else 0.0
+        sign = "+" if avg_delta >= 0 else ""
+        cells.append(f"{sign}{avg_delta:.3f}")
+
+        label = config_key.replace("__", " / ").replace("_", "\\_")
+        rows.append(f"  {label} & " + " & ".join(cells) + " \\\\")
+
+    # Baseline row
+    base_cells = []
+    for domain in DOMAINS:
+        val = baseline_f1.get(domain)
+        base_cells.append(f"{val:.3f}" if val is not None else "--")
+    avg_base = float(np.mean(list(baseline_f1.values()))) if baseline_f1 else 0.0
+    base_cells.append(f"{avg_base:.3f}")
+    baseline_row = "  \\textit{baseline (real\\_only)} & " + " & ".join(base_cells) + " \\\\"
+
+    footer = (
+        "\\bottomrule\n"
+        "\\end{tabular}\n"
+        "\\end{table*}\n"
+    )
+
+    return header + baseline_row + "\n\\midrule\n" + "\n".join(rows) + "\n" + footer
+
+
+# ---------------------------------------------------------------------------
 # Placeholder fill for main.tex
 # ---------------------------------------------------------------------------
 
@@ -449,6 +534,11 @@ def main() -> None:
     write_text(
         tables_dir / "tab_main_results.tex",
         latex_table_experiment_grid(reports),
+    )
+
+    write_text(
+        tables_dir / "tab_delta_results.tex",
+        latex_table_delta(reports),
     )
 
     for domain in DOMAINS:
